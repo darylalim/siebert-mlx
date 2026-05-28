@@ -103,28 +103,17 @@ def process_dataframe(df, text_column, model, tokenizer):
     return result
 
 
-st.set_page_config(
-    page_title="Text Classification Pipeline",
-    page_icon=":mag:",
-    layout="wide",
-)
+st.set_page_config(page_title="SiEBERT Pipeline")
 
 with st.spinner("Loading model..."):
     model, tokenizer = load_model()
 
-st.title("Text Classification Pipeline")
-st.write("Classify the sentiment of text in your CSV as positive or negative.")
-st.caption("Powered by SiEBERT (RoBERTa-large) · Running on MLX (Apple Silicon)")
+st.title("SiEBERT Pipeline")
+st.caption("Classify sentiment in English text with the SiEBERT model on Apple Silicon with MLX.")
 
-col_upload, col_sample = st.columns(2)
-with col_upload:
-    uploaded_file = st.file_uploader("Upload CSV file", type=["csv"])
-with col_sample:
-    st.write("")
-    st.write("")
-    use_sample = st.button("Try with sample data")
-
-st.caption("Supports CSV files. Your data is processed locally and never stored.")
+uploaded_file = st.file_uploader("Upload CSV file", type=["csv"])
+use_sample = st.button("Sample", key="sample")
+st.caption("Your data is processed locally and never leaves your machine.")
 
 if use_sample:
     st.session_state["df"] = pd.read_csv(SAMPLE_DATA_PATH)
@@ -150,21 +139,22 @@ if df is not None:
     elif (default_col := detect_text_column(df)) is None:
         st.warning("No text columns detected. Please check your CSV.")
     else:
-        st.subheader("Select the column containing text to classify")
-
         columns = df.columns.tolist()
         text_column = st.selectbox(
-            "Text column", options=columns, index=columns.index(default_col)
+            "Text column",
+            options=columns,
+            index=columns.index(default_col),
+            help="Select the column containing English text for sentiment classification.",
         )
 
-        st.write("Preview of selected column")
-        st.dataframe(df[[text_column]].head(), use_container_width=True)
+        st.caption("Preview of selected column")
+        st.dataframe(df[[text_column]].head(), width="stretch")
 
-        col_classify, col_reset = st.columns([1, 1])
+        col_classify, col_reset, _ = st.columns([1, 1, 6])
         with col_classify:
-            classify_clicked = st.button("Classify", type="primary")
+            classify_clicked = st.button("Classify", type="primary", key="classify")
         with col_reset:
-            if st.button("Start over"):
+            if st.button("Reset", key="reset"):
                 for key in ["df", "source_name"]:
                     st.session_state.pop(key, None)
                 st.rerun()
@@ -196,11 +186,12 @@ if df is not None:
                 m3.metric("Negative", f"{neg_count} ({neg_count / total * 100:.0f}%)")
                 m4.metric("Avg confidence", f"{avg_conf:.1%}")
 
-                st.dataframe(result_df, use_container_width=True)
+                st.dataframe(result_df, width="stretch")
 
             st.download_button(
-                label="Download results as CSV",
+                label="Download",
                 data=csv_data,
                 file_name=f"{source_name}_sentiment.csv",
                 mime="text/csv",
+                key="download",
             )
