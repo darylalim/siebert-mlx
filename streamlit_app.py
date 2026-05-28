@@ -16,7 +16,7 @@ from transformers import (
 load_dotenv()
 
 BATCH_SIZE = 8
-SAMPLE_DATA_PATH = Path(__file__).parent / "tests" / "data" / "csv" / "mixed_sample.csv"
+SAMPLE_DATA_PATH = Path(__file__).parent / "samples" / "mixed_sample.csv"
 
 
 def detect_text_column(df: pd.DataFrame) -> str | None:

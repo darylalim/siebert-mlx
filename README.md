@@ -30,6 +30,13 @@ export HF_TOKEN=hf_...
 uv run streamlit run streamlit_app.py
 ```
 
+## Sample Data
+
+`samples/` contains example CSVs:
+
+- `mixed_sample.csv` — 20-row mixed sample, loaded by the **Sample** button
+- `product_reviews.csv`, `movie_reviews.csv`, `social_media.csv`, `restaurant_reviews.csv`, `app_reviews.csv` — 40 rows each, one per domain
+
 ## Testing
 
 ```bash

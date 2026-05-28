@@ -53,7 +53,7 @@ Single-file application (`streamlit_app.py`, ~195 lines):
 - `process_dataframe` returns a copy; input DataFrame is not mutated
 - `st.session_state` persists loaded DataFrame across Streamlit reruns; `st.button` returns `True` only on the rerun immediately after a click, then `False` on subsequent reruns
 - Walrus operator (`:=`) in UI guards to combine detect + check into one `elif`
-- `SAMPLE_DATA_PATH` points to `tests/data/csv/mixed_sample.csv` for the "Sample" button
+- `SAMPLE_DATA_PATH` points to `samples/mixed_sample.csv` for the "Sample" button
 - Uses Streamlit default theme settings (no custom `.streamlit/config.toml`)
 - Dependencies managed by `uv` with lockfile (`uv.lock`); `[tool.uv] override-dependencies` unpins `streamlit` from `mlx-transformers`'s exact pin so the latest Streamlit is installed
 
@@ -62,9 +62,12 @@ Single-file application (`streamlit_app.py`, ~195 lines):
 - `tests/conftest.py` — module-level patches for `RobertaForSequenceClassification`, `snapshot_download`, `torch.load`, and `safetensors.torch.save_file` to prevent model downloads and weight conversion during test collection
 - `tests/test_streamlit_app.py` — unit tests for `detect_text_column`, `_ensure_safetensors`, `load_model`, `process_dataframe`, `BATCH_SIZE`, and `SAMPLE_DATA_PATH`; uses class-scoped `autouse` fixture for Streamlit mock in `TestProcessDataframe` and per-test decorator mocks for model loading
 - `tests/test_app_flow.py` — end-to-end flow tests via `streamlit.testing.v1.AppTest`: initial render, Sample button loads CSV into `session_state`, selectbox label/help text, Classify+Reset visibility, Reset clears state; relies on `conftest.py` patches so no network access
-- `tests/data/csv/product_reviews.csv` — 40 e-commerce product reviews
-- `tests/data/csv/movie_reviews.csv` — 40 film and TV opinions
-- `tests/data/csv/social_media.csv` — 40 tweets and social media posts
-- `tests/data/csv/restaurant_reviews.csv` — 40 dining and food service reviews
-- `tests/data/csv/app_reviews.csv` — 40 mobile/web app store reviews
-- `tests/data/csv/mixed_sample.csv` — 20-row sample (4 from each domain) for quick testing
+
+## Sample Data
+
+- `samples/mixed_sample.csv` — 20-row sample (4 from each domain), loaded by the "Sample" button via `SAMPLE_DATA_PATH`
+- `samples/product_reviews.csv` — 40 e-commerce product reviews
+- `samples/movie_reviews.csv` — 40 film and TV opinions
+- `samples/social_media.csv` — 40 tweets and social media posts
+- `samples/restaurant_reviews.csv` — 40 dining and food service reviews
+- `samples/app_reviews.csv` — 40 mobile/web app store reviews
