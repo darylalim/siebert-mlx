@@ -1,6 +1,6 @@
 # SiEBERT Pipeline
 
-Streamlit app for classifying text sentiment as positive/negative using [SiEBERT](https://huggingface.co/siebert/sentiment-roberta-large-english) (RoBERTa-large, trained on ~1.4M diverse texts).
+Classify sentiment in English text with the [SiEBERT](https://huggingface.co/siebert/sentiment-roberta-large-english) model on Apple Silicon with MLX.
 
 ## Features
 
@@ -33,7 +33,9 @@ uv run streamlit run streamlit_app.py
 ## Testing
 
 ```bash
-uv run pytest
+uv run pytest                              # all tests
+uv run pytest tests/test_streamlit_app.py  # unit tests
+uv run pytest tests/test_app_flow.py       # AppTest flow tests
 ```
 
 ## Citation
