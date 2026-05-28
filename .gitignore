@@ -3,6 +3,10 @@
 .ipynb_checkpoints
 .pytest_cache
 .ruff_cache
+.streamlit/secrets.toml
 .venv
 __pycache__
+*.egg-info/
+build/
+dist/
 docs/superpowers/
