@@ -79,7 +79,7 @@ def process_dataframe(df, text_column, model, tokenizer):
         progress_bar.progress(1.0)
     else:
         id2label = model.config.id2label
-        indices, valid_texts = zip(*valid)
+        indices, valid_texts = zip(*valid, strict=True)
         total = len(valid_texts)
 
         for start in range(0, total, BATCH_SIZE):
@@ -98,7 +98,7 @@ def process_dataframe(df, text_column, model, tokenizer):
             mx.eval(max_probs, preds)
 
             for idx, pred, conf in zip(
-                indices[start:end], preds.tolist(), max_probs.tolist()
+                indices[start:end], preds.tolist(), max_probs.tolist(), strict=True
             ):
                 sentiments[idx] = id2label[pred].lower()
                 confidences[idx] = round(conf, 4)

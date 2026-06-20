@@ -58,6 +58,7 @@ Single-file application (`streamlit_app.py`, ~205 lines):
 - `SAMPLE_DATA_PATH` points to `samples/mixed_sample.csv` for the "Sample" button
 - Uses Streamlit default theme settings (no custom `.streamlit/config.toml`)
 - Dependencies managed by `uv` with lockfile (`uv.lock`); `[tool.uv] override-dependencies` unpins `streamlit` from `mlx-transformers`'s exact pin so the latest Streamlit is installed
+- Ruff lint config (`[tool.ruff.lint]`): `select = ["E", "F", "I", "UP", "B"]`, `ignore = ["E501"]` (line length owned by `ruff format`), `combine-as-imports = true` (keeps the multi-name `transformers` import in one block); `zip()` calls pass `strict=True` (B905)
 
 ## Tests
 
