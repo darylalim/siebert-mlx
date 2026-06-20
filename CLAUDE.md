@@ -33,6 +33,8 @@ uv run pytest tests/test_streamlit_app.py::test_name   # single test
 
 Use `ruff` for all linting and formatting. Run `uv run ruff check --fix .` to auto-fix lint issues. Use `ty` for type checking. Use `pytest` for unit testing.
 
+When working with Python, invoke the relevant `/astral:<skill>` (`/astral:uv`, `/astral:ty`, `/astral:ruff`) to ensure best practices are followed.
+
 ## Architecture
 
 Single-file application (`streamlit_app.py`, ~195 lines):
