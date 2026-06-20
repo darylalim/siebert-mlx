@@ -63,6 +63,12 @@ def load_model():
     local_dir = _ensure_safetensors(model_path, token)
     model = RobertaForSequenceClassification(config)
     model.from_pretrained(str(local_dir), float16=True)
+    # Force the (lazy) float16 weights to materialize on the thread that loads
+    # the model. MLX streams are thread-local and Streamlit runs each rerun on a
+    # fresh thread; without this, the cached weights stay as pending ops bound to
+    # the loader thread's GPU stream, and a later rerun's mx.eval fails with
+    # "There is no Stream(gpu, 0) in current thread."
+    mx.eval(model.parameters())
     tokenizer = AutoTokenizer.from_pretrained(model_path, token=token)
     return model, tokenizer
 
@@ -196,12 +202,56 @@ if df is not None:
 
                 # total > 0 guaranteed: df.empty and all-blank branches exit above
                 m1, m2, m3, m4 = st.columns(4)
-                m1.metric("Total rows", total)
-                m2.metric("Positive", f"{pos_count} ({pos_count / total * 100:.0f}%)")
-                m3.metric("Negative", f"{neg_count} ({neg_count / total * 100:.0f}%)")
-                m4.metric("Avg confidence", f"{avg_conf:.1%}")
+                m1.metric("Total rows", total, border=True)
+                m2.metric(
+                    "Positive",
+                    f"{pos_count} ({pos_count / total * 100:.0f}%)",
+                    border=True,
+                )
+                m3.metric(
+                    "Negative",
+                    f"{neg_count} ({neg_count / total * 100:.0f}%)",
+                    border=True,
+                )
+                m4.metric("Avg confidence", f"{avg_conf:.1%}", border=True)
 
-                st.dataframe(result_df, width="stretch")
+                st.caption("Sentiment distribution")
+                dist_df = pd.DataFrame(
+                    {
+                        "Sentiment": ["positive", "negative"],
+                        "Count": [pos_count, neg_count],
+                    }
+                )
+                st.bar_chart(dist_df, x="Sentiment", y="Count", horizontal=True)
+
+                # Styler handles value-based coloring; column_config handles
+                # formatting (per Streamlit guidance). Color is a subtle,
+                # theme-safe rgba tint so it reads on light and dark themes.
+                sentiment_tint = {
+                    "positive": "background-color: rgba(33, 195, 84, 0.12)",
+                    "negative": "background-color: rgba(255, 75, 75, 0.12)",
+                }
+                styled_df = result_df.style.map(
+                    lambda v: sentiment_tint.get(v, ""), subset=["Sentiment"]
+                )
+                st.dataframe(
+                    styled_df,
+                    width="stretch",
+                    hide_index=True,
+                    column_config={
+                        "Sentiment": st.column_config.TextColumn(
+                            "Sentiment",
+                            help="Predicted sentiment (blank for empty or missing text).",
+                        ),
+                        "Confidence": st.column_config.ProgressColumn(
+                            "Confidence",
+                            help="Model confidence in the predicted sentiment.",
+                            format="percent",
+                            min_value=0.0,
+                            max_value=1.0,
+                        ),
+                    },
+                )
 
             st.download_button(
                 label="Download",

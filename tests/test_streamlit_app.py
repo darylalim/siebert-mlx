@@ -186,6 +186,26 @@ class TestLoadModel:
         assert model is mock_model
         assert tokenizer is mock_tokenizer
 
+    @patch("streamlit_app.mx")
+    @patch("streamlit_app._ensure_safetensors", return_value="/fake/local/dir")
+    @patch("streamlit_app.AutoTokenizer")
+    @patch("streamlit_app.AutoConfig")
+    @patch("streamlit_app.RobertaForSequenceClassification")
+    def test_materializes_weights_on_load_thread(
+        self, mock_model_cls, mock_config_cls, mock_tok_cls, mock_ensure, mock_mx
+    ):
+        # Weights must be eval'd on the loading thread; otherwise the lazy
+        # float16 arrays stay bound to that thread's (thread-local) MLX GPU
+        # stream and a later Streamlit rerun thread fails with
+        # "There is no Stream(gpu, 0) in current thread."
+        mock_tok_cls.from_pretrained.return_value = MagicMock()
+        load_model.clear()
+        load_model()
+
+        mock_mx.eval.assert_called_once_with(
+            mock_model_cls.return_value.parameters.return_value
+        )
+
 
 # --- process_dataframe ---
 
