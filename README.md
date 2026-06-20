@@ -36,6 +36,7 @@ uv run streamlit run streamlit_app.py
 
 - `mixed_sample.csv` — 20-row mixed sample, loaded by the **Sample** button
 - `product_reviews.csv`, `movie_reviews.csv`, `social_media.csv`, `restaurant_reviews.csv`, `app_reviews.csv` — 40 rows each, one per domain
+- `blank_cells.csv` — 10-row edge-case sample with missing and whitespace-only cells in the text column
 
 ## Testing
 

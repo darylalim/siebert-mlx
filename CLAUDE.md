@@ -73,3 +73,4 @@ Single-file application (`streamlit_app.py`, ~205 lines):
 - `samples/social_media.csv` — 40 tweets and social media posts
 - `samples/restaurant_reviews.csv` — 40 dining and food service reviews
 - `samples/app_reviews.csv` — 40 mobile/web app store reviews
+- `samples/blank_cells.csv` — 10-row edge-case sample with an `id` column and missing/whitespace text cells, to exercise blank-skipping (including the pandas 3.0 `NaN` path that `fillna("")` guards against)

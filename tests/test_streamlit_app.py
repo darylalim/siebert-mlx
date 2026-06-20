@@ -328,6 +328,30 @@ class TestProcessDataframe:
         assert result["Confidence"].iloc[1] == 0.0
         assert result["Sentiment"].iloc[2] == "negative"
 
+    def test_processes_blank_cells_sample_file(self):
+        # Integration: the bundled blank_cells.csv must flow through the real
+        # read -> detect -> process path without crashing, skipping its missing
+        # (NaN) and whitespace-only cells while classifying the rest.
+        df = pd.read_csv(SAMPLE_DATA_PATH.parent / "blank_cells.csv")
+        assert detect_text_column(df) == "text"
+
+        blank_ids = [3, 4, 8]  # 3 & 8 missing (NaN), 4 whitespace-only
+        valid_count = len(df) - len(blank_ids)
+        result = process_dataframe(
+            df,
+            "text",
+            _make_mock_model(["positive"] * valid_count),
+            _make_mock_tokenizer(),
+        )
+
+        assert len(result) == len(df)
+        blanks = result[result["id"].isin(blank_ids)]
+        assert (blanks["Sentiment"] == "").all()
+        assert (blanks["Confidence"] == 0.0).all()
+        valids = result[~result["id"].isin(blank_ids)]
+        assert (valids["Sentiment"] == "positive").all()
+        assert (valids["Confidence"] > 0).all()
+
     def test_handles_empty_dataframe(self):
         df = pd.DataFrame({"text": []})
         model = MagicMock()
