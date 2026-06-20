@@ -311,6 +311,23 @@ class TestProcessDataframe:
         assert "Sentiment" not in df.columns
         assert "Sentiment" in result.columns
 
+    def test_skips_missing_text_cells(self):
+        # Regression: pandas 3.0 keeps a missing cell as float NaN after
+        # astype(str), so a blank cell must be coerced and skipped (sentiment
+        # "", confidence 0.0) rather than crashing on NaN.strip().
+        df = pd.DataFrame({"text": ["good", None, "bad"]})
+        result = process_dataframe(
+            df,
+            "text",
+            _make_mock_model(["positive", "negative"]),
+            _make_mock_tokenizer(),
+        )
+        assert len(result) == 3
+        assert result["Sentiment"].iloc[0] == "positive"
+        assert result["Sentiment"].iloc[1] == ""
+        assert result["Confidence"].iloc[1] == 0.0
+        assert result["Sentiment"].iloc[2] == "negative"
+
     def test_handles_empty_dataframe(self):
         df = pd.DataFrame({"text": []})
         model = MagicMock()

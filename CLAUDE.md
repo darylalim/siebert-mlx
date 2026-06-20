@@ -37,9 +37,9 @@ When working with Python, invoke the relevant `/astral:<skill>` (`/astral:uv`, `
 
 ## Architecture
 
-Single-file application (`streamlit_app.py`, ~195 lines):
+Single-file application (`streamlit_app.py`, ~205 lines):
 
-1. **`detect_text_column`** — returns first string-dtype column name via `next()` generator
+1. **`detect_text_column`** — returns first string- or object-dtype column name via `next()` generator (`pd.api.types.is_string_dtype` / `is_object_dtype`, matching the pandas 3.0 default `str` dtype)
 2. **`_ensure_safetensors`** — downloads model via `snapshot_download` (prefers `model.safetensors`, falls back to `pytorch_model.bin`), converts to safetensors if needed; `torch` and `safetensors` are lazy-imported only when conversion is required
 3. **`load_model`** — loads config via `AutoConfig`, constructs `RobertaForSequenceClassification`, loads weights via `from_pretrained` with `float16=True`; cached with `@st.cache_resource`; authenticates with `HF_TOKEN`
 4. **`process_dataframe`** — pre-filters blanks, batches valid texts (`BATCH_SIZE=8`), tokenizes with `return_tensors="np"` and converts to `mx.array`, classifies via softmax over logits; uses `.tolist()` for batch conversion
@@ -50,7 +50,7 @@ Single-file application (`streamlit_app.py`, ~195 lines):
 - MLX for all inference on Apple Silicon (no device management needed)
 - `hf_logging.set_verbosity_error()` suppresses expected checkpoint warnings
 - Confidence via `mx.softmax(logits, axis=-1)` with `mx.max` and `mx.argmax`; `mx.eval()` before `.tolist()`; labels from `model.config.id2label`
-- Empty/whitespace-only texts skipped; get sentiment `""` and confidence `0.0`
+- Empty, whitespace-only, and missing (`NaN`) texts skipped; get sentiment `""` and confidence `0.0` (`fillna("")` before `astype(str)` coerces pandas 3.0 missing cells, which no longer stringify to `"nan"`)
 - Tokenizer uses `return_tensors="np"` converted to `mx.array`, with `truncation=True` (512 token limit) and `padding=True`
 - `process_dataframe` returns a copy; input DataFrame is not mutated
 - `st.session_state` persists loaded DataFrame across Streamlit reruns; `st.button` returns `True` only on the rerun immediately after a click, then `False` on subsequent reruns

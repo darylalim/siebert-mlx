@@ -20,7 +20,15 @@ SAMPLE_DATA_PATH = Path(__file__).parent / "samples" / "mixed_sample.csv"
 
 
 def detect_text_column(df: pd.DataFrame) -> str | None:
-    return next((col for col in df.columns if df[col].dtype == "object"), None)
+    return next(
+        (
+            col
+            for col in df.columns
+            if pd.api.types.is_string_dtype(df[col])
+            or pd.api.types.is_object_dtype(df[col])
+        ),
+        None,
+    )
 
 
 def _ensure_safetensors(model_path: str, token: str | None) -> Path:
@@ -60,7 +68,7 @@ def load_model():
 
 def process_dataframe(df, text_column, model, tokenizer):
     """Classify texts in batches; returns a copy with Sentiment and Confidence columns."""
-    texts = df[text_column].astype(str).tolist()
+    texts = df[text_column].fillna("").astype(str).tolist()
     sentiments = [""] * len(texts)
     confidences = [0.0] * len(texts)
     progress_bar = st.progress(0)
