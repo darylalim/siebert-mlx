@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from typing import cast
 
 import mlx.core as mx
 import pandas as pd
@@ -97,8 +98,12 @@ def process_dataframe(df, text_column, model, tokenizer):
             preds = mx.argmax(probs, axis=-1)
             mx.eval(max_probs, preds)
 
+            # preds/max_probs are 1-D, so .tolist() is always a list here;
+            # cast narrows mlx's `int | float | list` return type for the checker.
+            batch_preds = cast(list[int], preds.tolist())
+            batch_confs = cast(list[float], max_probs.tolist())
             for idx, pred, conf in zip(
-                indices[start:end], preds.tolist(), max_probs.tolist(), strict=True
+                indices[start:end], batch_preds, batch_confs, strict=True
             ):
                 sentiments[idx] = id2label[pred].lower()
                 confidences[idx] = round(conf, 4)
