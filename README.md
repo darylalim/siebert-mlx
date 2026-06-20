@@ -1,4 +1,4 @@
-# SiEBERT Pipeline
+# SiEBERT MLX
 
 Classify sentiment in English text with the [SiEBERT](https://huggingface.co/siebert/sentiment-roberta-large-english) model on Apple Silicon with MLX.
 

@@ -24,7 +24,7 @@ def test_app_starts_without_exception():
 
 def test_initial_render_shows_title_and_caption():
     at = _new_app().run()
-    assert any(t.value == "SiEBERT Pipeline" for t in at.title)
+    assert any(t.value == "SiEBERT MLX" for t in at.title)
     assert any("SiEBERT" in c.value for c in at.caption)
 
 

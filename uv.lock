@@ -1762,7 +1762,7 @@ wheels = [
 ]
 
 [[package]]
-name = "siebert-pipeline"
+name = "siebert-mlx"
 version = "0.6.0"
 source = { virtual = "." }
 dependencies = [

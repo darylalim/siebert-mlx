@@ -103,12 +103,12 @@ def process_dataframe(df, text_column, model, tokenizer):
     return result
 
 
-st.set_page_config(page_title="SiEBERT Pipeline")
+st.set_page_config(page_title="SiEBERT MLX")
 
 with st.spinner("Loading model..."):
     model, tokenizer = load_model()
 
-st.title("SiEBERT Pipeline")
+st.title("SiEBERT MLX")
 st.caption(
     "Classify sentiment in English text with the SiEBERT model on Apple Silicon with MLX."
 )
