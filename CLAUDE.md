@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**SiEBERT MLX** (`siebert-mlx`) is a Streamlit web app that classifies sentiment in English text with SiEBERT (`siebert/sentiment-roberta-large-english`) on Apple Silicon via MLX. Users upload a CSV (or try the built-in sample data), select the text column, classify, and download results with "Sentiment" and "Confidence" columns. Guided step-by-step UI with auto-detected text columns, summary metrics, and a Reset button to start over.
+**SiEBERT MLX** (`siebert-mlx`) is a Streamlit application for sentiment classification in English text using SiEBERT (`siebert/sentiment-roberta-large-english`) on Apple Silicon with MLX. Users upload a CSV (or try the built-in sample data), select the text column, classify, and download results with "Sentiment" and "Confidence" columns. Guided step-by-step UI with auto-detected text columns, summary metrics, and a Reset button to start over.
 
 ## Commands
 

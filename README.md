@@ -1,6 +1,6 @@
 # SiEBERT MLX
 
-Classify sentiment in English text with the [SiEBERT](https://huggingface.co/siebert/sentiment-roberta-large-english) model on Apple Silicon with MLX.
+Streamlit application for sentiment classification in English text using [SiEBERT](https://huggingface.co/siebert/sentiment-roberta-large-english) on Apple Silicon with MLX.
 
 ## Features
 

@@ -1,7 +1,7 @@
 [project]
 name = "siebert-mlx"
 version = "0.6.0"
-description = "Classify sentiment in English text with the SiEBERT model on Apple Silicon with MLX."
+description = "Streamlit application for sentiment classification in English text using SiEBERT on Apple Silicon with MLX."
 requires-python = ">=3.12"
 dependencies = [
     "mlx",

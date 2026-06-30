@@ -25,7 +25,7 @@ def test_app_starts_without_exception():
 def test_initial_render_shows_title_and_caption():
     at = _new_app().run()
     assert any(t.value == "SiEBERT MLX" for t in at.title)
-    assert any("SiEBERT" in c.value for c in at.caption)
+    assert any("processed locally" in c.value for c in at.caption)
 
 
 def test_initial_render_has_uploader_and_sample_button():

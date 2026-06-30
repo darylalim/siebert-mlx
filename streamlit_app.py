@@ -128,9 +128,6 @@ with st.spinner("Loading model..."):
     model, tokenizer = load_model()
 
 st.title("SiEBERT MLX")
-st.caption(
-    "Classify sentiment in English text with the SiEBERT model on Apple Silicon with MLX."
-)
 
 uploaded_file = st.file_uploader("Upload CSV file", type=["csv"])
 use_sample = st.button("Sample", key="sample")
