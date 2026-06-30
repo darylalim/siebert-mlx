@@ -160,7 +160,6 @@ uploaded_file = st.file_uploader(
     key=f"uploader_{st.session_state['uploader_key']}",
 )
 st.button("Sample", key="sample", icon=":material/dataset:", on_click=_load_sample)
-st.caption("Your data is processed locally and never leaves your machine.")
 
 # Load a freshly uploaded file once. Guarding on file_id stops the persisted
 # uploader value from being re-read on every rerun, which would otherwise undo
