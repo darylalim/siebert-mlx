@@ -17,6 +17,7 @@ from transformers import (
 load_dotenv()
 
 BATCH_SIZE = 8
+STYLE_ROW_CAP = 2000
 SAMPLE_DATA_PATH = Path(__file__).parent / "samples" / "mixed_sample.csv"
 
 
@@ -116,30 +117,62 @@ def process_dataframe(df, text_column, model, tokenizer):
 
             progress_bar.progress(end / total)
 
+    progress_bar.empty()
     result = df.copy()
     result["Sentiment"] = sentiments
     result["Confidence"] = confidences
     return result
 
 
-st.set_page_config(page_title="SiEBERT MLX")
+st.set_page_config(page_title="SiEBERT MLX", page_icon=":material/sentiment_satisfied:")
 
 with st.spinner("Loading model..."):
     model, tokenizer = load_model()
 
 st.title("SiEBERT MLX")
 
-uploaded_file = st.file_uploader("Upload CSV file", type=["csv"])
-use_sample = st.button("Sample", key="sample")
-st.caption("Your data is processed locally and never leaves your machine.")
+st.session_state.setdefault("uploader_key", 0)
 
-if use_sample:
+
+def _clear_results():
+    st.session_state.pop("result_df", None)
+    st.session_state.pop("result_col", None)
+
+
+def _load_sample():
     st.session_state["df"] = pd.read_csv(SAMPLE_DATA_PATH)
     st.session_state["source_name"] = "mixed_sample"
-elif uploaded_file is not None:
+    st.session_state.pop("_uploaded_id", None)
+    st.session_state["uploader_key"] += 1
+    _clear_results()
+
+
+def _reset():
+    for key in ["df", "source_name", "_uploaded_id"]:
+        st.session_state.pop(key, None)
+    st.session_state["uploader_key"] += 1
+    _clear_results()
+
+
+uploaded_file = st.file_uploader(
+    "Upload CSV file",
+    type=["csv"],
+    key=f"uploader_{st.session_state['uploader_key']}",
+)
+st.button("Sample", key="sample", icon=":material/dataset:", on_click=_load_sample)
+st.caption("Your data is processed locally and never leaves your machine.")
+
+# Load a freshly uploaded file once. Guarding on file_id stops the persisted
+# uploader value from being re-read on every rerun, which would otherwise undo
+# Reset and clobber a Sample selection.
+if uploaded_file is not None and uploaded_file.file_id != st.session_state.get(
+    "_uploaded_id"
+):
+    st.session_state["_uploaded_id"] = uploaded_file.file_id
     try:
         st.session_state["df"] = pd.read_csv(uploaded_file)
         st.session_state["source_name"] = uploaded_file.name.rsplit(".", 1)[0]
+        _clear_results()
     except (
         pd.errors.ParserError,
         pd.errors.EmptyDataError,
@@ -166,30 +199,41 @@ if df is not None:
         )
 
         st.caption("Preview of selected column")
-        st.dataframe(df[[text_column]].head(), width="stretch")
+        st.dataframe(df[[text_column]].head(), width="stretch", hide_index=True)
 
-        col_classify, col_reset, _ = st.columns([1, 1, 6])
-        with col_classify:
-            classify_clicked = st.button("Classify", type="primary", key="classify")
-        with col_reset:
-            if st.button("Reset", key="reset"):
-                for key in ["df", "source_name"]:
-                    st.session_state.pop(key, None)
-                st.rerun()
+        # Horizontal container (not fixed-width columns) so each button is as
+        # wide as its label+icon needs and neither wraps to a second line.
+        with st.container(horizontal=True):
+            classify_clicked = st.button(
+                "Classify",
+                type="primary",
+                icon=":material/play_arrow:",
+                key="classify",
+            )
+            st.button("Reset", icon=":material/refresh:", key="reset", on_click=_reset)
 
         if classify_clicked:
             with st.spinner("Classifying..."):
-                result_df = process_dataframe(df, text_column, model, tokenizer)
+                st.session_state["result_df"] = process_dataframe(
+                    df, text_column, model, tokenizer
+                )
+                st.session_state["result_col"] = text_column
 
+        # Render persisted results so post-classify reruns (e.g. the Download
+        # click or a theme toggle) don't collapse the view or re-run inference.
+        # Invalidate when the selected column no longer matches what was run.
+        result_df = st.session_state.get("result_df")
+        if result_df is not None and st.session_state.get("result_col") == text_column:
             csv_data = result_df.to_csv(index=False)
 
             if result_df["Sentiment"].eq("").all():
                 st.info(
                     "All values in this column are empty. "
-                    "No classification was performed."
+                    "No classification was performed.",
+                    icon=":material/info:",
                 )
             else:
-                st.success("Classification complete!")
+                st.success("Classification complete!", icon=":material/check_circle:")
 
                 total = len(result_df)
                 classified = result_df[result_df["Sentiment"] != ""]
@@ -197,63 +241,75 @@ if df is not None:
                 neg_count = int((classified["Sentiment"] == "negative").sum())
                 avg_conf = classified["Confidence"].mean() if len(classified) else 0.0
 
-                # total > 0 guaranteed: df.empty and all-blank branches exit above
-                m1, m2, m3, m4 = st.columns(4)
-                m1.metric("Total rows", total, border=True)
-                m2.metric(
-                    "Positive",
-                    f"{pos_count} ({pos_count / total * 100:.0f}%)",
-                    border=True,
-                )
-                m3.metric(
-                    "Negative",
-                    f"{neg_count} ({neg_count / total * 100:.0f}%)",
-                    border=True,
-                )
-                m4.metric("Avg confidence", f"{avg_conf:.1%}", border=True)
+                # total > 0 guaranteed: df.empty and all-blank branches exit
+                # above. A horizontal container (not st.columns) lets the cards
+                # wrap on narrow screens, per Streamlit dashboard guidance.
+                with st.container(horizontal=True):
+                    st.metric("Total rows", total, border=True)
+                    st.metric(
+                        "Positive",
+                        f"{pos_count} ({pos_count / total * 100:.0f}%)",
+                        border=True,
+                    )
+                    st.metric(
+                        "Negative",
+                        f"{neg_count} ({neg_count / total * 100:.0f}%)",
+                        border=True,
+                    )
+                    st.metric("Avg confidence", f"{avg_conf:.1%}", border=True)
 
-                st.caption("Sentiment distribution")
-                dist_df = pd.DataFrame(
-                    {
-                        "Sentiment": ["positive", "negative"],
-                        "Count": [pos_count, neg_count],
+                with st.container(border=True):
+                    st.markdown("**Sentiment distribution**")
+                    dist_df = pd.DataFrame(
+                        {
+                            "Sentiment": ["positive", "negative"],
+                            "Count": [pos_count, neg_count],
+                        }
+                    )
+                    st.bar_chart(dist_df, x="Sentiment", y="Count", horizontal=True)
+
+                with st.container(border=True):
+                    st.markdown("**Results**")
+                    # Styler does value-based coloring; column_config does
+                    # formatting (per Streamlit guidance). The tint is a subtle,
+                    # theme-safe rgba so it reads on light and dark themes.
+                    sentiment_tint = {
+                        "positive": "background-color: rgba(33, 195, 84, 0.12)",
+                        "negative": "background-color: rgba(255, 75, 75, 0.12)",
                     }
-                )
-                st.bar_chart(dist_df, x="Sentiment", y="Count", horizontal=True)
-
-                # Styler handles value-based coloring; column_config handles
-                # formatting (per Streamlit guidance). Color is a subtle,
-                # theme-safe rgba tint so it reads on light and dark themes.
-                sentiment_tint = {
-                    "positive": "background-color: rgba(33, 195, 84, 0.12)",
-                    "negative": "background-color: rgba(255, 75, 75, 0.12)",
-                }
-                styled_df = result_df.style.map(
-                    lambda v: sentiment_tint.get(v, ""), subset=["Sentiment"]
-                )
-                st.dataframe(
-                    styled_df,
-                    width="stretch",
-                    hide_index=True,
-                    column_config={
-                        "Sentiment": st.column_config.TextColumn(
-                            "Sentiment",
-                            help="Predicted sentiment (blank for empty or missing text).",
-                        ),
-                        "Confidence": st.column_config.ProgressColumn(
-                            "Confidence",
-                            help="Model confidence in the predicted sentiment.",
-                            format="percent",
-                            min_value=0.0,
-                            max_value=1.0,
-                        ),
-                    },
-                )
+                    # The Styler builds a per-cell style for every row, which
+                    # defeats st.dataframe's virtualization; skip the (cosmetic)
+                    # tint above STYLE_ROW_CAP. The CSV download uses the
+                    # unstyled result_df, so the file is unaffected.
+                    display_df = result_df
+                    if len(result_df) <= STYLE_ROW_CAP:
+                        display_df = result_df.style.map(
+                            lambda v: sentiment_tint.get(v, ""), subset=["Sentiment"]
+                        )
+                    st.dataframe(
+                        display_df,
+                        width="stretch",
+                        hide_index=True,
+                        column_config={
+                            "Sentiment": st.column_config.TextColumn(
+                                "Sentiment",
+                                help="Predicted sentiment (blank for empty or missing text).",
+                            ),
+                            "Confidence": st.column_config.ProgressColumn(
+                                "Confidence",
+                                help="Model confidence in the predicted sentiment.",
+                                format="percent",
+                                min_value=0.0,
+                                max_value=1.0,
+                            ),
+                        },
+                    )
 
             st.download_button(
                 label="Download",
                 data=csv_data,
                 file_name=f"{source_name}_sentiment.csv",
                 mime="text/csv",
+                icon=":material/download:",
                 key="download",
             )

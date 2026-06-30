@@ -88,3 +88,57 @@ def test_no_text_columns_shows_warning():
     at.run()
     assert any("No text columns" in w.value for w in at.warning)
     assert len(at.selectbox) == 0
+
+
+def _classified_state(at):
+    """Seed session_state as if a classification has already been run."""
+    at.session_state["df"] = pd.DataFrame({"text": ["great", "awful"]})
+    at.session_state["source_name"] = "x"
+    at.session_state["result_df"] = pd.DataFrame(
+        {
+            "text": ["great", "awful"],
+            "Sentiment": ["positive", "negative"],
+            "Confidence": [0.99, 0.97],
+        }
+    )
+    at.session_state["result_col"] = "text"
+    return at
+
+
+def test_results_persist_from_session_state_without_reclassify():
+    # Results render from stored state on a plain rerun (no Classify click),
+    # so a post-classify interaction never re-runs inference.
+    at = _classified_state(_new_app()).run()
+    assert any("Classification complete" in s.value for s in at.success)
+    assert len(at.metric) == 4
+
+
+def test_reset_clears_classification_results():
+    # Reset clears the persisted result, not just df/source_name.
+    at = _classified_state(_new_app()).run()
+    at.button(key="reset").click().run()
+    for key in ["df", "source_name", "result_df", "result_col"]:
+        assert key not in at.session_state
+
+
+def test_results_hidden_when_selected_column_changes():
+    # Switching the column invalidates the displayed result until re-classify.
+    at = _new_app()
+    at.session_state["df"] = pd.DataFrame(
+        {"text": ["great", "awful"], "other": ["a", "b"]}
+    )
+    at.session_state["source_name"] = "x"
+    at.session_state["result_df"] = pd.DataFrame(
+        {
+            "text": ["great", "awful"],
+            "other": ["a", "b"],
+            "Sentiment": ["positive", "negative"],
+            "Confidence": [0.99, 0.97],
+        }
+    )
+    at.session_state["result_col"] = "text"
+    at.run()
+    assert any("Classification complete" in s.value for s in at.success)
+
+    at.selectbox[0].set_value("other").run()
+    assert not any("Classification complete" in s.value for s in at.success)
