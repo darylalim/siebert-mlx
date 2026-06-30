@@ -11,7 +11,7 @@ resolution-markers = [
 ]
 
 [manifest]
-overrides = [{ name = "streamlit", specifier = ">=1.34.0,<2.0" }]
+overrides = [{ name = "streamlit", specifier = ">=1.58.0,<2.0" }]
 
 [[package]]
 name = "aiohappyeyeballs"

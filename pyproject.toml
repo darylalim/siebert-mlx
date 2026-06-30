@@ -17,7 +17,7 @@ dev = ["pytest", "ruff", "ty"]
 convert = ["safetensors", "torch"]
 
 [tool.uv]
-override-dependencies = ["streamlit>=1.34.0,<2.0"]
+override-dependencies = ["streamlit>=1.58.0,<2.0"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
