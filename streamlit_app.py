@@ -199,7 +199,12 @@ def _render_results(result_df, source_name):
                     "Count": [pos_count, neg_count],
                 }
             )
-            st.bar_chart(dist_df, x="Sentiment", y="Count", horizontal=True)
+            # Pin an explicit bar color: the default series color is
+            # near-invisible against the dark theme's surface. This mid-blue
+            # (the dark-theme primaryColor) reads on both light and dark.
+            st.bar_chart(
+                dist_df, x="Sentiment", y="Count", horizontal=True, color="#3B82F6"
+            )
 
         with st.container(border=True):
             st.markdown("**Results**")
