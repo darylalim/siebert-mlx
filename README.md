@@ -7,8 +7,11 @@ Streamlit application for sentiment classification in English text using [SiEBER
 - Upload a CSV or try built-in sample data
 - Auto-detects text columns with manual override
 - Binary sentiment (positive/negative) with confidence scores
-- Summary metrics: total rows, positive/negative counts, average confidence
-- Results table with CSV download
+- Summary metric cards: total rows, positive/negative counts, average confidence
+- Sentiment-distribution chart
+- Styled results table with CSV download
+- Results persist across interactions; one-click Reset to start over
+- Light and dark themes
 - Batched MLX inference in float16 on Apple Silicon
 - Handles empty, whitespace-only, and malformed input
 
