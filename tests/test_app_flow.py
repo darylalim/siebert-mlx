@@ -186,3 +186,27 @@ def test_sample_clears_previous_results():
     assert at.session_state["source_name"] == "mixed_sample"
     assert "result_df" not in at.session_state
     assert "result_col" not in at.session_state
+
+
+def test_malformed_upload_shows_error_and_clears_data():
+    # A malformed upload shows the error AND clears any previously loaded data,
+    # so the failed file can't keep presenting the old file's preview/results.
+    at = _new_app().run()
+    at.file_uploader[0].upload("good.csv", b"text\ngreat\nawful\n").run()
+    assert "df" in at.session_state
+
+    at.file_uploader[0].upload("bad.csv", b"").run()  # empty -> EmptyDataError
+    assert any("Could not read" in e.value for e in at.error)
+    assert "df" not in at.session_state
+
+
+def test_upload_error_persists_across_reruns():
+    # _uploaded_id is not advanced on a failed read, so the error re-renders on a
+    # later rerun instead of silently vanishing.
+    at = _new_app().run()
+    at.file_uploader[0].upload("bad.csv", b"").run()
+    assert any("Could not read" in e.value for e in at.error)
+
+    at.run()  # benign rerun
+    assert any("Could not read" in e.value for e in at.error)
+    assert "df" not in at.session_state

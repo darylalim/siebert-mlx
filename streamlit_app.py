@@ -163,22 +163,31 @@ st.button("Sample", key="sample", icon=":material/dataset:", on_click=_load_samp
 
 # Load a freshly uploaded file once. Guarding on file_id stops the persisted
 # uploader value from being re-read on every rerun, which would otherwise undo
-# Reset and clobber a Sample selection.
+# Reset and clobber a Sample selection. _uploaded_id is advanced only after a
+# successful read, so a failed upload keeps re-showing its error (instead of
+# vanishing on the next rerun) and never leaves the previous file's data on screen.
 if uploaded_file is not None and uploaded_file.file_id != st.session_state.get(
     "_uploaded_id"
 ):
-    st.session_state["_uploaded_id"] = uploaded_file.file_id
     try:
-        st.session_state["df"] = pd.read_csv(uploaded_file)
-        st.session_state["source_name"] = uploaded_file.name.rsplit(".", 1)[0]
-        _clear_results()
+        new_df = pd.read_csv(uploaded_file)
     except (
         pd.errors.ParserError,
         pd.errors.EmptyDataError,
         UnicodeDecodeError,
         ValueError,
     ):
+        # Drop any previously loaded data so the failed upload can't keep
+        # presenting the old file's preview/results as if it were this one.
+        for key in ["df", "source_name"]:
+            st.session_state.pop(key, None)
+        _clear_results()
         st.error("Could not read this file. Please check it's a valid CSV.")
+    else:
+        st.session_state["_uploaded_id"] = uploaded_file.file_id
+        st.session_state["df"] = new_df
+        st.session_state["source_name"] = uploaded_file.name.rsplit(".", 1)[0]
+        _clear_results()
 
 df = st.session_state.get("df")
 source_name = st.session_state.get("source_name", "")
