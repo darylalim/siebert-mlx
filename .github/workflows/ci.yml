@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel superseded runs on the same ref (e.g. rapid pushes to a PR).
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    # Apple Silicon runner: `mlx` ships wheels only for macOS arm64, and both
+    # pytest (imports streamlit_app -> mlx) and ty (resolves imports) need it.
+    # macOS minutes are free on public repos.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      # --all-groups pulls the `convert` group (torch, safetensors) so
+      # tests/conftest.py can patch torch.load / safetensors.torch.save_file at
+      # collection time. --frozen fails CI if uv.lock is stale.
+      - name: Sync dependencies
+        run: uv sync --all-groups --frozen
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Format check
+        run: uv run ruff format --check .
+
+      - name: Type check
+        run: uv run ty check .
+
+      - name: Test
+        run: uv run pytest -q
