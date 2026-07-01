@@ -139,19 +139,114 @@ def _clear_results():
     st.session_state.pop("result_col", None)
 
 
+def _reset_uploader():
+    # Forget the last upload's id and mint a fresh (empty) file_uploader widget.
+    st.session_state.pop("_uploaded_id", None)
+    st.session_state["uploader_key"] += 1
+
+
 def _load_sample():
     st.session_state["df"] = pd.read_csv(SAMPLE_DATA_PATH)
     st.session_state["source_name"] = "mixed_sample"
-    st.session_state.pop("_uploaded_id", None)
-    st.session_state["uploader_key"] += 1
+    _reset_uploader()
     _clear_results()
 
 
 def _reset():
-    for key in ["df", "source_name", "_uploaded_id"]:
+    for key in ["df", "source_name"]:
         st.session_state.pop(key, None)
-    st.session_state["uploader_key"] += 1
+    _reset_uploader()
     _clear_results()
+
+
+def _render_results(result_df, source_name):
+    csv_data = result_df.to_csv(index=False)
+
+    if result_df["Sentiment"].eq("").all():
+        st.info(
+            "All values in this column are empty. No classification was performed.",
+            icon=":material/info:",
+        )
+    else:
+        st.success("Classification complete!", icon=":material/check_circle:")
+
+        # total > 0 guaranteed: the df.empty and all-blank branches exit before
+        # here. A horizontal container (not st.columns) lets the metric cards
+        # wrap on narrow screens, per Streamlit dashboard guidance.
+        total = len(result_df)
+        classified = result_df[result_df["Sentiment"] != ""]
+        pos_count = int((classified["Sentiment"] == "positive").sum())
+        neg_count = int((classified["Sentiment"] == "negative").sum())
+        avg_conf = classified["Confidence"].mean() if len(classified) else 0.0
+
+        with st.container(horizontal=True):
+            st.metric("Total rows", total, border=True)
+            st.metric(
+                "Positive",
+                f"{pos_count} ({pos_count / total * 100:.0f}%)",
+                border=True,
+            )
+            st.metric(
+                "Negative",
+                f"{neg_count} ({neg_count / total * 100:.0f}%)",
+                border=True,
+            )
+            st.metric("Avg confidence", f"{avg_conf:.1%}", border=True)
+
+        with st.container(border=True):
+            st.markdown("**Sentiment distribution**")
+            dist_df = pd.DataFrame(
+                {
+                    "Sentiment": ["positive", "negative"],
+                    "Count": [pos_count, neg_count],
+                }
+            )
+            st.bar_chart(dist_df, x="Sentiment", y="Count", horizontal=True)
+
+        with st.container(border=True):
+            st.markdown("**Results**")
+            # Styler does value-based coloring; column_config does formatting
+            # (per Streamlit guidance). The tint is a subtle, theme-safe rgba so
+            # it reads on light and dark themes.
+            sentiment_tint = {
+                "positive": "background-color: rgba(33, 195, 84, 0.12)",
+                "negative": "background-color: rgba(255, 75, 75, 0.12)",
+            }
+            # The Styler builds a per-cell style for every row, which defeats
+            # st.dataframe's virtualization; skip the (cosmetic) tint above
+            # STYLE_ROW_CAP. The CSV download uses the unstyled result_df.
+            display_df = result_df
+            if len(result_df) <= STYLE_ROW_CAP:
+                display_df = result_df.style.map(
+                    lambda v: sentiment_tint.get(v, ""), subset=["Sentiment"]
+                )
+            st.dataframe(
+                display_df,
+                width="stretch",
+                hide_index=True,
+                column_config={
+                    "Sentiment": st.column_config.TextColumn(
+                        "Sentiment",
+                        help="Predicted sentiment (blank for empty or missing text).",
+                    ),
+                    "Confidence": st.column_config.ProgressColumn(
+                        "Confidence",
+                        help="Model confidence in the predicted sentiment.",
+                        format="percent",
+                        min_value=0.0,
+                        max_value=1.0,
+                    ),
+                },
+            )
+
+    st.download_button(
+        label="Download",
+        data=csv_data,
+        file_name=f"{source_name}_sentiment.csv",
+        mime="text/csv",
+        icon=":material/download:",
+        key="download",
+    )
 
 
 uploaded_file = st.file_uploader(
@@ -232,92 +327,4 @@ if df is not None:
         # Invalidate when the selected column no longer matches what was run.
         result_df = st.session_state.get("result_df")
         if result_df is not None and st.session_state.get("result_col") == text_column:
-            csv_data = result_df.to_csv(index=False)
-
-            if result_df["Sentiment"].eq("").all():
-                st.info(
-                    "All values in this column are empty. "
-                    "No classification was performed.",
-                    icon=":material/info:",
-                )
-            else:
-                st.success("Classification complete!", icon=":material/check_circle:")
-
-                total = len(result_df)
-                classified = result_df[result_df["Sentiment"] != ""]
-                pos_count = int((classified["Sentiment"] == "positive").sum())
-                neg_count = int((classified["Sentiment"] == "negative").sum())
-                avg_conf = classified["Confidence"].mean() if len(classified) else 0.0
-
-                # total > 0 guaranteed: df.empty and all-blank branches exit
-                # above. A horizontal container (not st.columns) lets the cards
-                # wrap on narrow screens, per Streamlit dashboard guidance.
-                with st.container(horizontal=True):
-                    st.metric("Total rows", total, border=True)
-                    st.metric(
-                        "Positive",
-                        f"{pos_count} ({pos_count / total * 100:.0f}%)",
-                        border=True,
-                    )
-                    st.metric(
-                        "Negative",
-                        f"{neg_count} ({neg_count / total * 100:.0f}%)",
-                        border=True,
-                    )
-                    st.metric("Avg confidence", f"{avg_conf:.1%}", border=True)
-
-                with st.container(border=True):
-                    st.markdown("**Sentiment distribution**")
-                    dist_df = pd.DataFrame(
-                        {
-                            "Sentiment": ["positive", "negative"],
-                            "Count": [pos_count, neg_count],
-                        }
-                    )
-                    st.bar_chart(dist_df, x="Sentiment", y="Count", horizontal=True)
-
-                with st.container(border=True):
-                    st.markdown("**Results**")
-                    # Styler does value-based coloring; column_config does
-                    # formatting (per Streamlit guidance). The tint is a subtle,
-                    # theme-safe rgba so it reads on light and dark themes.
-                    sentiment_tint = {
-                        "positive": "background-color: rgba(33, 195, 84, 0.12)",
-                        "negative": "background-color: rgba(255, 75, 75, 0.12)",
-                    }
-                    # The Styler builds a per-cell style for every row, which
-                    # defeats st.dataframe's virtualization; skip the (cosmetic)
-                    # tint above STYLE_ROW_CAP. The CSV download uses the
-                    # unstyled result_df, so the file is unaffected.
-                    display_df = result_df
-                    if len(result_df) <= STYLE_ROW_CAP:
-                        display_df = result_df.style.map(
-                            lambda v: sentiment_tint.get(v, ""), subset=["Sentiment"]
-                        )
-                    st.dataframe(
-                        display_df,
-                        width="stretch",
-                        hide_index=True,
-                        column_config={
-                            "Sentiment": st.column_config.TextColumn(
-                                "Sentiment",
-                                help="Predicted sentiment (blank for empty or missing text).",
-                            ),
-                            "Confidence": st.column_config.ProgressColumn(
-                                "Confidence",
-                                help="Model confidence in the predicted sentiment.",
-                                format="percent",
-                                min_value=0.0,
-                                max_value=1.0,
-                            ),
-                        },
-                    )
-
-            st.download_button(
-                label="Download",
-                data=csv_data,
-                file_name=f"{source_name}_sentiment.csv",
-                mime="text/csv",
-                icon=":material/download:",
-                key="download",
-            )
+            _render_results(result_df, source_name)
