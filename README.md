@@ -4,6 +4,10 @@
 
 Streamlit application for sentiment classification in English text using [SiEBERT](https://huggingface.co/siebert/sentiment-roberta-large-english) on Apple Silicon with MLX.
 
+| Light theme | Dark theme |
+| :---: | :---: |
+| ![SiEBERT MLX classifying sample data in light mode](docs/screenshot-light.png) | ![SiEBERT MLX classifying sample data in dark mode](docs/screenshot-dark.png) |
+
 ## Features
 
 - Upload a CSV or try built-in sample data
@@ -17,13 +21,19 @@ Streamlit application for sentiment classification in English text using [SiEBER
 - Batched MLX inference in float16 on Apple Silicon
 - Handles empty, whitespace-only, and malformed input
 
+## Requirements
+
+- **Apple Silicon Mac** (M1 or later) — required. MLX ships arm64-only macOS wheels, so the app will not install or run on Intel Macs, Linux, or Windows.
+- **Python 3.12+**
+- **[uv](https://docs.astral.sh/uv/getting-started/installation/)** for dependency management
+
 ## Setup
 
 ```bash
 uv sync
 ```
 
-Set a [Hugging Face token](https://huggingface.co/settings/tokens) for authenticated model downloads:
+The SiEBERT model is public, so **no authentication is required**. Optionally, set a [Hugging Face token](https://huggingface.co/settings/tokens) for higher download rate limits (or access to gated/private repos) — either export it or place it in a gitignored `.env` file (loaded automatically):
 
 ```bash
 export HF_TOKEN=hf_...
@@ -34,6 +44,8 @@ export HF_TOKEN=hf_...
 ```bash
 uv run streamlit run streamlit_app.py
 ```
+
+On first launch the SiEBERT model (~1.3 GB) is downloaded from Hugging Face and cached under `~/.cache/huggingface`, so the initial **Loading model...** step can take a few minutes. Subsequent launches load from cache.
 
 ## Sample Data
 
@@ -50,6 +62,18 @@ uv run pytest                              # all tests
 uv run pytest tests/test_streamlit_app.py  # unit tests
 uv run pytest tests/test_app_flow.py       # AppTest flow tests
 ```
+
+## Development
+
+Lint, format, and type-check before committing:
+
+```bash
+uv run ruff check .          # lint
+uv run ruff format --check . # format check
+uv run ty check .            # type check
+```
+
+CI (`.github/workflows/ci.yml`) runs these same checks plus the test suite on macOS.
 
 ## Citation
 
