@@ -1,6 +1,9 @@
 # SiEBERT MLX
 
 [![CI](https://github.com/darylalim/siebert-mlx/actions/workflows/ci.yml/badge.svg)](https://github.com/darylalim/siebert-mlx/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/tag/darylalim/siebert-mlx?label=release&sort=semver)](https://github.com/darylalim/siebert-mlx/releases)
+[![License: MIT](https://img.shields.io/github/license/darylalim/siebert-mlx)](LICENSE)
+![Python](https://img.shields.io/badge/python-3.12%2B-blue)
 
 Streamlit application for sentiment classification in English text using [SiEBERT](https://huggingface.co/siebert/sentiment-roberta-large-english) on Apple Silicon with MLX.
 
