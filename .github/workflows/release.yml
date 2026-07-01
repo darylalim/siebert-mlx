@@ -1,0 +1,35 @@
+name: Release
+
+# Publishes a GitHub Release whenever a version tag (vX.Y.Z) is pushed:
+#   git tag v0.8.0 && git push origin v0.8.0
+# The release notes are auto-generated from the commits/PRs since the previous
+# tag, so keep the conventional-commit subjects tidy.
+on:
+  push:
+    tags:
+      - "v*"
+
+# gh needs write access to contents to create the release.
+permissions:
+  contents: write
+
+jobs:
+  release:
+    # ubuntu (not macos like ci.yml): this job only calls the GitHub API via
+    # gh -- it never imports mlx or runs the suite -- so it needs no arm64
+    # wheels, and Linux minutes are cheaper.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history so --generate-notes can diff against the previous tag.
+          fetch-depth: 0
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes \
+            --verify-tag
