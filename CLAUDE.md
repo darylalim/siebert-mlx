@@ -9,10 +9,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-# Setup — `--all-groups` adds the opt-in `convert` group (torch, safetensors):
-# tests/conftest.py patches torch.load and safetensors.torch.save_file at
-# collection, so a bare `uv sync` (default `dev` group only) can't run pytest.
-uv sync --all-groups
+# Setup — torch/safetensors arrive transitively via mlx-transformers, so the
+# lazy-import conversion path and tests/conftest.py's torch/safetensors patches
+# both work after a plain sync (no separate dependency group needed).
+uv sync
 
 # Auth (model download) — read from env or a gitignored .env (via python-dotenv)
 export HF_TOKEN=hf_...
@@ -68,7 +68,7 @@ Single-file application (`streamlit_app.py`, ~331 lines):
 - KPI metrics use `st.metric(..., border=True)` inside `st.container(horizontal=True)` (content-sized, wraps on narrow screens — prefer over `st.columns` for metric/button rows, which forces fixed ratios and can wrap a button label onto two lines); the distribution `st.bar_chart` and results `st.dataframe` sit in bordered `st.container(border=True)` cards with bold `st.markdown` labels; Material Symbols icons (`:material/...:`) on buttons/callouts and a `page_icon`
 - Results `st.dataframe` uses `column_config` (`ProgressColumn` for `Confidence` as `format="percent"`, `TextColumn` for `Sentiment`) with `hide_index=True`; per-value `Sentiment` coloring is a Pandas `Styler.map` tint (formatting via `column_config`, coloring via Styler), skipped above `STYLE_ROW_CAP` rows so `st.dataframe` virtualization stays fast; the CSV download is built from the unstyled `result_df` first, so styling never reaches the file
 - Custom `shadcn`-inspired theme in `.streamlit/config.toml`: shared typography/shape/semantic palette in `[theme]`, surface colors split across `[theme.light]` / `[theme.dark]` (+ matching `.sidebar` sub-tables) so the settings-menu light/dark toggle stays available (a single `[theme]` block would lock the app to one mode). Dark mode uses a blue `primaryColor` (`#3B82F6`) so white primary-button text stays readable; green/red sentiment tints are theme-neutral rgba so they read in either mode
-- Dependencies managed by `uv` with lockfile (`uv.lock`); `[tool.uv] override-dependencies = ["streamlit>=1.58.0,<2.0"]` both unpins `streamlit` from `mlx-transformers`'s exact pin and floors it at 1.58.0 (modern theming keys + `st.container(horizontal=True)` need it). This override is the single lever for the streamlit version — a floor on the bare `streamlit` dependency would be superseded by it. `[dependency-groups]` has `dev` (`pytest`/`ruff`/`ty`, installed by default) and `convert` (`torch`/`safetensors`, opt-in) — both the `_ensure_safetensors` conversion path and the test `conftest.py` need `convert`, so use `uv sync --all-groups`
+- Dependencies managed by `uv` with lockfile (`uv.lock`); `[tool.uv] override-dependencies = ["streamlit>=1.58.0,<2.0"]` both unpins `streamlit` from `mlx-transformers`'s exact pin and floors it at 1.58.0 (modern theming keys + `st.container(horizontal=True)` need it). This override is the single lever for the streamlit version — a floor on the bare `streamlit` dependency would be superseded by it. `[dependency-groups]` has only `dev` (`pytest`/`ruff`/`ty`, installed by default); `torch`/`safetensors` are NOT a separate group — they arrive transitively as production deps of `mlx-transformers`, so a plain `uv sync` already covers both the `_ensure_safetensors` conversion path and `conftest.py`'s `torch.load`/`safetensors.torch.save_file` patches
 - Ruff lint config (`[tool.ruff.lint]`): `select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]`, `ignore = ["E501"]` (line length owned by `ruff format`), `combine-as-imports = true` (keeps the multi-name `transformers` import in one block); `zip()` calls pass `strict=True` (B905)
 
 ## Tests
@@ -84,7 +84,7 @@ Single-file application (`streamlit_app.py`, ~331 lines):
   - **PreToolUse** `protect-env.sh` — denies tool edits to `.env`/`.env.*` (holds `HF_TOKEN`, gitignored); `.env.example`/`.sample`/`.template` stay editable
   - **PostToolUse** `ruff-fix.sh` — `ruff format` + `ruff check --fix` on edited `*.py` (silent on success); `ty-check.sh` — `ty check .`, exits 2 to feed type errors back
   - **Stop** `pytest-on-stop.sh` — runs `uv run pytest -q` at end of turn; exits 2 (with a `stop_hook_active` loop guard) so a failing suite blocks finishing
-- `.github/workflows/ci.yml` mirrors the hooks on `macos-latest` (mlx ships arm64-only wheels): `uv sync --all-groups --frozen` (`--frozen` fails on a stale `uv.lock`), then `ruff check`, `ruff format --check`, `ty check`, `pytest -q`
+- `.github/workflows/ci.yml` mirrors the hooks on `macos-latest` (mlx ships arm64-only wheels): `uv sync --frozen` (`--frozen` fails on a stale `uv.lock`), then `ruff check`, `ruff format --check`, `ty check`, `pytest -q`
 
 ## Sample Data
 

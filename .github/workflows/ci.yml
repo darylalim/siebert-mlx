@@ -25,11 +25,11 @@ jobs:
           enable-cache: true
           cache-dependency-glob: uv.lock
 
-      # --all-groups pulls the `convert` group (torch, safetensors) so
-      # tests/conftest.py can patch torch.load / safetensors.torch.save_file at
-      # collection time. --frozen fails CI if uv.lock is stale.
+      # torch/safetensors (used by the model-conversion path and patched in
+      # tests/conftest.py) arrive transitively via mlx-transformers, so a plain
+      # sync installs them. --frozen fails CI if uv.lock is stale.
       - name: Sync dependencies
-        run: uv sync --all-groups --frozen
+        run: uv sync --frozen
 
       - name: Lint
         run: uv run ruff check .
