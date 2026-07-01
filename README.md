@@ -70,3 +70,9 @@ If you use SiEBERT in your work, please cite the following paper:
   author = {Jochen Hartmann and Mark Heitmann and Christian Siebert and Christina Schamp},
 }
 ```
+
+## License
+
+Released under the [MIT License](LICENSE). This covers the application code in this repository only.
+
+The [SiEBERT model](https://huggingface.co/siebert/sentiment-roberta-large-english) is downloaded at runtime and is subject to its own terms from its model card; it is not redistributed by this project.
