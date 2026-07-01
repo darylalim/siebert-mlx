@@ -9,6 +9,8 @@ loading is mocked at the conftest level so no network access is required.
 import pandas as pd
 from streamlit.testing.v1 import AppTest
 
+from streamlit_app import STYLE_ROW_CAP
+
 APP_PATH = "streamlit_app.py"
 TIMEOUT = 30
 
@@ -210,3 +212,57 @@ def test_upload_error_persists_across_reruns():
     at.run()  # benign rerun
     assert any("Could not read" in e.value for e in at.error)
     assert "df" not in at.session_state
+
+
+def test_result_survives_plain_rerun_after_upload():
+    # The file_id guard must stop the upload branch from re-reading (and calling
+    # _clear_results) on a plain rerun that keeps the same uploaded file, which
+    # would wipe a just-computed result. Fails if the guard is removed.
+    at = _new_app().run()
+    at.file_uploader[0].upload("reviews.csv", b"text\ngreat\nawful\n").run()
+    at.session_state["result_df"] = pd.DataFrame(
+        {
+            "text": ["great", "awful"],
+            "Sentiment": ["positive", "negative"],
+            "Confidence": [0.99, 0.97],
+        }
+    )
+    at.session_state["result_col"] = "text"
+
+    at.run()  # plain rerun; uploader still holds the same file
+    assert "result_df" in at.session_state
+    assert any("Classification complete" in s.value for s in at.success)
+
+
+def test_large_result_skips_styler_without_error():
+    # Above STYLE_ROW_CAP the Styler tint is skipped; the results still render.
+    n = STYLE_ROW_CAP + 1
+    at = _new_app()
+    at.session_state["df"] = pd.DataFrame({"text": ["good"] * n})
+    at.session_state["source_name"] = "big"
+    at.session_state["result_df"] = pd.DataFrame(
+        {
+            "text": ["good"] * n,
+            "Sentiment": ["positive"] * n,
+            "Confidence": [0.9] * n,
+        }
+    )
+    at.session_state["result_col"] = "text"
+    at.run()
+    assert not at.exception
+    assert len(at.metric) == 4
+
+
+def test_all_blank_result_shows_info_not_metrics():
+    # An all-blank classification renders st.info, not the success/metrics path.
+    at = _new_app()
+    at.session_state["df"] = pd.DataFrame({"text": ["", "  "]})
+    at.session_state["source_name"] = "x"
+    at.session_state["result_df"] = pd.DataFrame(
+        {"text": ["", "  "], "Sentiment": ["", ""], "Confidence": [0.0, 0.0]}
+    )
+    at.session_state["result_col"] = "text"
+    at.run()
+    assert any("No classification was performed" in i.value for i in at.info)
+    assert len(at.metric) == 0
+    assert not any("Classification complete" in s.value for s in at.success)

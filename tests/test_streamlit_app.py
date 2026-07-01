@@ -402,6 +402,7 @@ class TestProcessDataframe:
         assert len(result) == 0
         model.assert_not_called()
         self.mock_progress.progress.assert_called_once_with(1.0)
+        self.mock_progress.empty.assert_called_once()
 
     def test_tokenizer_called_with_truncation(self):
         df = pd.DataFrame({"text": ["a review"]})
@@ -450,6 +451,7 @@ class TestProcessDataframe:
         assert all(c == 0.0 for c in result["Confidence"])
         model.assert_not_called()
         self.mock_progress.progress.assert_called_once_with(1.0)
+        self.mock_progress.empty.assert_called_once()
 
     def test_handles_mixed_blank_text(self):
         df = pd.DataFrame({"text": ["good product", "", "  ", "bad product"]})
