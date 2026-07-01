@@ -160,8 +160,6 @@ def _reset():
 
 
 def _render_results(result_df, source_name):
-    csv_data = result_df.to_csv(index=False)
-
     if result_df["Sentiment"].eq("").all():
         st.info(
             "All values in this column are empty. No classification was performed.",
@@ -239,9 +237,12 @@ def _render_results(result_df, source_name):
                 },
             )
 
+    # Serialize lazily: the callable runs only when Download is clicked, not on
+    # every rerun that keeps results on screen. Built from the unstyled
+    # result_df, so styling never reaches the file.
     st.download_button(
         label="Download",
-        data=csv_data,
+        data=lambda: result_df.to_csv(index=False),
         file_name=f"{source_name}_sentiment.csv",
         mime="text/csv",
         icon=":material/download:",
