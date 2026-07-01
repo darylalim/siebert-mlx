@@ -1,5 +1,7 @@
 # SiEBERT MLX
 
+[![CI](https://github.com/darylalim/siebert-mlx/actions/workflows/ci.yml/badge.svg)](https://github.com/darylalim/siebert-mlx/actions/workflows/ci.yml)
+
 Streamlit application for sentiment classification in English text using [SiEBERT](https://huggingface.co/siebert/sentiment-roberta-large-english) on Apple Silicon with MLX.
 
 ## Features
