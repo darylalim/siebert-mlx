@@ -7,6 +7,7 @@ import pytest
 from streamlit_app import (
     BATCH_SIZE,
     SAMPLE_DATA_PATH,
+    STYLE_ROW_CAP,
     _ensure_safetensors,
     detect_text_column,
     load_model,
@@ -19,6 +20,14 @@ from streamlit_app import (
 def test_batch_size_is_positive_int():
     assert isinstance(BATCH_SIZE, int)
     assert BATCH_SIZE > 0
+
+
+# --- STYLE_ROW_CAP ---
+
+
+def test_style_row_cap_is_positive_int():
+    assert isinstance(STYLE_ROW_CAP, int)
+    assert STYLE_ROW_CAP > 0
 
 
 # --- SAMPLE_DATA_PATH ---
@@ -306,6 +315,18 @@ class TestProcessDataframe:
         )
         last_call_arg = self.mock_progress.progress.call_args_list[-1][0][0]
         assert last_call_arg == pytest.approx(1.0)
+
+    def test_progress_bar_cleared_after_run(self):
+        # The bar is removed once classification finishes, so a lingering 100%
+        # bar doesn't sit above the results.
+        df = pd.DataFrame({"text": ["review"]})
+        process_dataframe(
+            df,
+            "text",
+            _make_mock_model(["positive"]),
+            _make_mock_tokenizer(),
+        )
+        self.mock_progress.empty.assert_called_once()
 
     def test_uses_correct_text_column(self):
         df = pd.DataFrame({"col_a": ["ignore"], "col_b": ["use this"]})

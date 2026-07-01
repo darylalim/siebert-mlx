@@ -141,3 +141,48 @@ def test_results_hidden_when_selected_column_changes():
 
     at.selectbox[0].set_value("other").run()
     assert not any("Classification complete" in s.value for s in at.success)
+
+
+def test_upload_loads_dataframe_into_session_state():
+    at = _new_app().run()
+    at.file_uploader[0].upload("reviews.csv", b"text\ngreat\nawful\n").run()
+    assert "df" in at.session_state
+    assert at.session_state["source_name"] == "reviews"
+
+
+def test_upload_then_reset_clears_data_and_stays_cleared():
+    # Regression: the uploader keeps its value across reruns, and the upload
+    # branch used to re-read it every run, so Reset was instantly undone. The
+    # dynamic uploader key + file_id guard make Reset stick.
+    at = _new_app().run()
+    at.file_uploader[0].upload("reviews.csv", b"text\ngreat\nawful\n").run()
+    assert "df" in at.session_state
+
+    at.button(key="reset").click().run()
+    assert "df" not in at.session_state
+
+    at.run()  # a later rerun must NOT re-load the lingering upload
+    assert "df" not in at.session_state
+
+
+def test_stale_upload_does_not_override_sample():
+    # Regression: a lingering uploaded file must not clobber a later Sample pick
+    # on subsequent reruns.
+    at = _new_app().run()
+    at.file_uploader[0].upload("reviews.csv", b"text\ngreat\nawful\n").run()
+    assert at.session_state["source_name"] == "reviews"
+
+    at.button(key="sample").click().run()
+    assert at.session_state["source_name"] == "mixed_sample"
+
+    at.run()
+    assert at.session_state["source_name"] == "mixed_sample"
+
+
+def test_sample_clears_previous_results():
+    # Loading Sample over an existing result clears the stale classification.
+    at = _classified_state(_new_app()).run()
+    at.button(key="sample").click().run()
+    assert at.session_state["source_name"] == "mixed_sample"
+    assert "result_df" not in at.session_state
+    assert "result_col" not in at.session_state
