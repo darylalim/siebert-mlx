@@ -33,3 +33,9 @@ combine-as-imports = true
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
+markers = [
+    "integration: loads the real ~1.4 GB checkpoint; deselected by default, run with `-m integration`",
+]
+# Deselect by default so the plain `pytest` used by the Stop hook and by CI's
+# fast job stays offline. A `-m` on the command line overrides this one.
+addopts = "-m 'not integration'"

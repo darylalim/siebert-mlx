@@ -31,10 +31,12 @@ uv run ruff format --check .   # CI uses --check (fails instead of rewriting)
 uv run ty check .
 
 # Test
-uv run pytest                                          # all tests
+uv run pytest                                          # everything except `integration`
 uv run pytest tests/test_streamlit_app.py              # unit tests
 uv run pytest tests/test_app_flow.py                   # AppTest flow tests
 uv run pytest tests/test_streamlit_app.py::test_name   # single test
+uv run pytest -m integration                           # real checkpoint, ~1.4 GB on a cold cache
+uv run pytest -o addopts="" -q                         # both, in one session
 ```
 
 Use `ruff` for all linting and formatting. Run `uv run ruff check --fix .` to auto-fix lint issues. Use `ty` for type checking. Use `pytest` for unit testing.
@@ -75,7 +77,8 @@ Single-file application (`streamlit_app.py`, ~331 lines):
 
 ## Tests
 
-- `tests/conftest.py` — module-level patches for `RobertaForSequenceClassification`, `snapshot_download`, `torch.load`, and `safetensors.torch.save_file` to prevent model downloads and weight conversion during test collection
+- `tests/conftest.py` — module-level patches for `RobertaForSequenceClassification`, `snapshot_download`, `torch.load`, and `safetensors.torch.save_file` to prevent model downloads and weight conversion during test collection. Also exposes the module-scoped `real_model` fixture, which lifts those patches *and* re-points `streamlit_app`'s own globals (bound to the mocks at its import) at the real objects, clearing `load_model`'s `st.cache_resource` entry on both sides so mocks cannot leak either way
+- `tests/test_inference_integration.py` — the only non-mocked tests: pins `float16` weights + `float32` logits, the `id2label` mapping, and two 4-decimal confidences. Marked `integration` and deselected by default via `addopts = "-m 'not integration'"`. The dtype assertion is the real tripwire — fp16's spacing below 1.0 (2⁻¹¹ ≈ 4.9e-4) means rounded confidences can never reliably distinguish fp16 from fp32, so the pinned values instead guard against a changed checkpoint, tokenizer, softmax axis, or label mapping
 - `tests/test_streamlit_app.py` — unit tests for `detect_text_column`, `_ensure_safetensors`, `load_model`, `process_dataframe` (incl. progress-bar clearing), `BATCH_SIZE`, `STYLE_ROW_CAP`, and `SAMPLE_DATA_PATH`; uses class-scoped `autouse` fixture for Streamlit mock in `TestProcessDataframe` and per-test decorator mocks for model loading
 - `tests/test_app_flow.py` — end-to-end flow tests via `streamlit.testing.v1.AppTest`: initial render, Sample/upload load into `session_state`, selectbox label/help, Classify+Reset visibility, Reset clears state, results persist across reruns and invalidate on column change; relies on `conftest.py` patches so no network access. `APP_PATH` must stay **absolute** — as of streamlit 1.61 `AppTest.from_file` resolves a relative path against the calling file (`tests/`), not the working directory
 - Simulate real uploads in `AppTest` with `at.file_uploader[0].upload(filename, content, mime_type)` — the value persists across reruns, so it can regression-test the reset-after-upload fix (upload → Reset → still cleared) and stale-upload-doesn't-clobber-`Sample`
@@ -86,7 +89,7 @@ Single-file application (`streamlit_app.py`, ~331 lines):
   - **PreToolUse** `protect-env.sh` — denies tool edits to `.env`/`.env.*` (holds `HF_TOKEN`, gitignored); `.env.example`/`.sample`/`.template` stay editable
   - **PostToolUse** `ruff-fix.sh` — `ruff format` + `ruff check --fix` on edited `*.py` (silent on success); `ty-check.sh` — `ty check .`, exits 2 to feed type errors back
   - **Stop** `pytest-on-stop.sh` — runs `uv run pytest -q` at end of turn; exits 2 (with a `stop_hook_active` loop guard) so a failing suite blocks finishing
-- `.github/workflows/ci.yml` mirrors the hooks on `macos-latest` (mlx ships arm64-only wheels): `uv sync --frozen` (`--frozen` fails on a stale `uv.lock`), then `ruff check`, `ruff format --check`, `ty check`, `pytest -q`
+- `.github/workflows/ci.yml` mirrors the hooks on `macos-latest` (mlx ships arm64-only wheels): the `check` job runs `uv sync --frozen` (`--frozen` fails on a stale `uv.lock`), then `ruff check`, `ruff format --check`, `ty check`, `pytest -q` — all offline. A second `integration` job runs `pytest -m integration` against the real checkpoint, with `~/.cache/huggingface/hub` cached (covers both the download and the safetensors conversion); no `HF_TOKEN` secret is needed since the model is public
 
 ## Sample Data
 
