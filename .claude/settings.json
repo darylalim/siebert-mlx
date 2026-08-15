@@ -1,4 +1,7 @@
 {
+  "permissions": {
+    "deny": ["Read(./.env)"]
+  },
   "hooks": {
     "PreToolUse": [
       {
@@ -18,10 +21,6 @@
           {
             "type": "command",
             "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/ruff-fix.sh\""
-          },
-          {
-            "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/ty-check.sh\""
           }
         ]
       }
@@ -31,7 +30,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/pytest-on-stop.sh\""
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/verify-on-stop.sh\""
           }
         ]
       }

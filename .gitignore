@@ -1,4 +1,5 @@
 .DS_Store
+.claude/.dirty
 .env
 .ipynb_checkpoints
 .pytest_cache
