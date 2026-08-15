@@ -1,5 +1,5 @@
 .DS_Store
-.claude/.dirty
+.claude/.verified
 .env
 .ipynb_checkpoints
 .pytest_cache
