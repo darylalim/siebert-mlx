@@ -1,9 +1,13 @@
 name: Release
 
-# Publishes a GitHub Release whenever a version tag (vX.Y.Z) is pushed:
+# Manual escape hatch: publishes a GitHub Release when a version tag is pushed
+# by hand, e.g. to re-cut a deleted release or tag an older commit.
 #   git tag v0.8.0 && git push origin v0.8.0
-# The release notes are auto-generated from the commits/PRs since the previous
-# tag, so keep the conventional-commit subjects tidy.
+#
+# The normal path is ci.yml's `release` job, which publishes automatically when a
+# bumped version in pyproject.toml lands green on main. The two cannot collide:
+# that job's tag is created with the GITHUB_TOKEN, and GitHub does not start a
+# workflow run from a GITHUB_TOKEN event, so this workflow never sees it.
 on:
   push:
     tags:
@@ -15,15 +19,14 @@ permissions:
 
 jobs:
   release:
-    # ubuntu (not macos like ci.yml): this job only calls the GitHub API via
-    # gh -- it never imports mlx or runs the suite -- so it needs no arm64
-    # wheels, and Linux minutes are cheaper.
+    # ubuntu (not macos like ci.yml): this job only calls the GitHub API via gh --
+    # it never imports mlx or runs the suite -- so it needs no arm64 wheels.
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-        with:
-          # Full history so --generate-notes can diff against the previous tag.
-          fetch-depth: 0
+      # Shallow is enough: --generate-notes builds the notes server-side and
+      # --verify-tag checks the tag on the remote, so neither reads local history.
+      - uses: actions/checkout@v7
 
       - name: Create release
         env:

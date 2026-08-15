@@ -5,29 +5,38 @@ on:
     branches: [main]
   pull_request:
 
-# Cancel superseded runs on the same ref (e.g. rapid pushes to a PR).
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # Only cancel superseded PR runs. Cancelling on main would leave a commit with
+  # no green CI -- and the release job below publishes only from a green main.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Least privilege by default; the release job re-grants write to itself.
+permissions:
+  contents: read
 
 jobs:
   check:
-    # Apple Silicon runner: `mlx` ships wheels only for macOS arm64, and both
-    # pytest (imports streamlit_app -> mlx) and ty (resolves imports) need it.
+    # macos-latest because mlx ships wheels only for macOS arm64, and both pytest
+    # (imports streamlit_app -> mlx) and ty (resolves imports) need it to resolve.
     # macOS minutes are free on public repos.
     runs-on: macos-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@v10.0.1
         with:
           enable-cache: true
+          # setup-uv's default glob is **/*requirements*.txt, which matches
+          # nothing here -- without this the cache never invalidates on a relock.
           cache-dependency-glob: uv.lock
+          # setup-uv v9 flipped this default to false. Left at the pre-v9 value so
+          # the version bump changed the action, not this repo's cache footprint.
+          prune-cache: true
 
-      # torch/safetensors (used by the model-conversion path and patched in
-      # tests/conftest.py) are direct production deps, so a plain sync installs
-      # them. --frozen fails CI if uv.lock is stale.
+      # --frozen fails CI if uv.lock is stale.
       - name: Sync dependencies
         run: uv sync --frozen
 
@@ -45,37 +54,29 @@ jobs:
 
   integration:
     # The rest of the suite mocks model loading, so it cannot catch a silent
-    # change in what the model computes -- which is exactly how the
-    # mlx-transformers 0.3.0 float16 -> float32 encoder shift slipped through.
-    # Split into its own job because it loads the real checkpoint; the fast
-    # `check` job stays offline.
-    #
-    # `needs: check` so a lint/format/type/unit failure doesn't also spend a
-    # 1.4 GB download and a multi-minute conversion to tell you the same thing.
+    # change in what the model computes -- exactly how the mlx-transformers 0.3.0
+    # float16 -> float32 encoder shift slipped through. Split out because it loads
+    # the real checkpoint; `needs: check` so a lint/type/unit failure doesn't also
+    # spend a 1.4 GB download to tell you the same thing.
     needs: check
     runs-on: macos-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@v10.0.1
         with:
           enable-cache: true
           cache-dependency-glob: uv.lock
+          prune-cache: true
 
-      # Caching covers both the ~1.4 GB pytorch_model.bin and the safetensors
-      # that _ensure_safetensors writes beside it, so warm reruns skip the
-      # download *and* the conversion.
-      #
-      # The key is exact and static, which is the cheap choice, not the clever
-      # one: an exact hit means actions/cache skips the save step, so this entry
-      # never refreshes on its own. If the model repo ever moves `main` to a new
-      # revision, snapshot_download wants a snapshot dir this cache does not
-      # have, and every run silently pays the full download + conversion until
-      # somebody bumps the suffix below. That is the lever -- bump `-v1`.
+      # Covers the download *and* the safetensors conversion. The key is exact
+      # and static, so actions/cache skips the save on a hit and this entry never
+      # refreshes itself: if the model repo moves `main` to a new revision, every
+      # run silently pays full download + conversion until someone bumps `-v1`.
       - name: Cache Hugging Face hub
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/huggingface/hub
           key: hf-hub-siebert-${{ runner.os }}-v1
@@ -83,12 +84,60 @@ jobs:
       - name: Sync dependencies
         run: uv sync --frozen
 
-      # The checkpoint is public, so no token is required to be *authorized*.
-      # HF_TOKEN is still passed when the secret exists, because anonymous
-      # downloads from shared Actions egress IPs are the ones that get 429'd,
-      # and a cold cache would then fail for a reason unrelated to this code.
-      # Unset secret -> empty string -> load_model's `or None` keeps it anonymous.
+      # The checkpoint is public, so no token is required to be authorized.
+      # HF_TOKEN is passed when the secret exists because anonymous downloads
+      # from shared Actions IPs are the ones that get 429'd. Unset secret -> ""
+      # -> load_model's `or None` keeps the request anonymous.
       - name: Integration test
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: uv run pytest --integration -m integration -q
+
+  release:
+    # Publishes a GitHub Release as soon as a bumped `version` in pyproject.toml
+    # lands green on main. `needs` both jobs above, so a release is never cut from
+    # a commit CI has not verified. `on.push.branches` already limits pushes to
+    # main, so the event check alone is enough to keep this off pull requests.
+    needs: [check, integration]
+    if: github.event_name == 'push'
+    # ubuntu, not macos: this job reads pyproject.toml and calls the GitHub API,
+    # never imports mlx, so it needs no arm64 wheels and no dependency sync.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.0.1
+        with:
+          # Nothing is synced here, so a cache entry would only be dead weight.
+          enable-cache: false
+
+      # Idempotent by existence check rather than by diffing HEAD^: a git diff
+      # misses a bump that arrives behind a merge commit's second parent, and
+      # re-fires on a workflow re-run. "Does this release already exist" is the
+      # right question in every one of those cases.
+      #
+      # `gh release create` creates the tag itself (--target), and --generate-notes
+      # builds the notes server-side, so a shallow checkout is enough.
+      #
+      # That tag is created with the GITHUB_TOKEN, and GitHub does not start a
+      # workflow run from a GITHUB_TOKEN event -- so release.yml does NOT also fire
+      # on it. That suppression is the only thing keeping the two release paths
+      # from double-publishing; do not swap this for a PAT without removing one.
+      - name: Publish release on version bump
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="v$(uv version --short)"
+          if gh release view "$version" >/dev/null 2>&1; then
+            echo "$version is already released; nothing to do."
+            exit 0
+          fi
+          echo "Publishing $version from $GITHUB_SHA"
+          gh release create "$version" \
+            --title "$version" \
+            --generate-notes \
+            --target "$GITHUB_SHA"
