@@ -36,6 +36,16 @@ jobs:
       - name: Sync dependencies
         run: uv sync --frozen
 
+      # First because it is the cheapest gate and it validates the file that
+      # governs every gate after it. Note the bootstrap limit: a YAML *syntax*
+      # error here means GitHub never parses this workflow, so this step cannot
+      # catch it -- which is why the Stop hook runs actionlint too, before the
+      # file ever reaches GitHub. What it does catch is the class that matters
+      # most now: shellcheck findings in the `run:` block of the release job,
+      # the only code in this repo that executes with `contents: write`.
+      - name: Workflow lint
+        run: uv run actionlint
+
       - name: Lint
         run: uv run ruff check .
 

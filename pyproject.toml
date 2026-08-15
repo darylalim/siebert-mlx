@@ -25,7 +25,17 @@ dependencies = [
 ]
 
 [dependency-groups]
-dev = ["pytest", "ruff", "ty"]
+dev = [
+    # Vendors the official actionlint binary (which also shellchecks `run:`
+    # blocks) so CI and the Stop hook can both invoke it via `uv run`, offline
+    # and identically. Ships an sdist only, but the integrity chain holds: the
+    # lock pins the sdist hash, the sdist carries per-platform SHA256s, and its
+    # download() raises on mismatch rather than warning.
+    "actionlint-py>=1.7.12.24",
+    "pytest",
+    "ruff",
+    "ty",
+]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]

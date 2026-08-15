@@ -35,6 +35,23 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
+
+          # Idempotent, so this path is safe to run twice on its own terms rather
+          # than relying on ci.yml's tag never reaching it. Two ways it already
+          # can fire on an existing release without any PAT involved:
+          # force-pushing an existing tag, and re-running an old workflow run.
+          #
+          # Releases, not tags, because the tag necessarily exists here -- it is
+          # what triggered this workflow. Assigned before the test rather than
+          # piped into it, so a transient API error aborts under `set -e` instead
+          # of reading as "not released" and falling through to create.
+          releases="$(gh release list --limit 200 --json tagName --jq '.[].tagName')"
+          if grep -qxF "$GITHUB_REF_NAME" <<<"$releases"; then
+            echo "$GITHUB_REF_NAME is already released; nothing to do."
+            exit 0
+          fi
+
           gh release create "$GITHUB_REF_NAME" \
             --title "$GITHUB_REF_NAME" \
             --generate-notes \

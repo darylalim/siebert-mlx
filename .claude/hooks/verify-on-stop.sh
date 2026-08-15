@@ -30,10 +30,15 @@ cd "$CLAUDE_PROJECT_DIR" 2>/dev/null || exit 0
 # blank_cells.csv; pyproject.toml and uv.lock because a dependency bump is
 # exactly how this repo last shipped a silent behavior change (dba72ff moved
 # the encoder from fp16 to fp32 activations with CI green).
+#
+# .github/workflows is in scope because ci.yml now carries a job that publishes
+# public releases with contents: write, and nothing else here validates YAML or
+# shell. Adding the path alone would have been pointless -- ruff/ty/pytest never
+# read it -- so it lands together with the actionlint gate below.
 fingerprint() {
   local files
   files=$(git ls-files --cached --others --exclude-standard \
-    -- '*.py' pyproject.toml uv.lock samples 2>/dev/null) || return 0
+    -- '*.py' pyproject.toml uv.lock samples .github/workflows 2>/dev/null) || return 0
   [ -n "$files" ] || return 0
   printf '%s\n' "$files" | tr '\n' '\0' | xargs -0 shasum 2>/dev/null |
     shasum | cut -d' ' -f1
@@ -49,6 +54,10 @@ current=$(fingerprint)
 # fail in milliseconds and cost nothing to put first. ruff-fix.sh cannot stand
 # in for `ruff check .` -- it applies only *safe* fixes and swallows the exit
 # code, so unfixable B/SIM/RUF violations survive it silently.
+#
+# actionlint runs here as well as in CI, not redundantly: a YAML syntax error in
+# ci.yml means GitHub never parses the workflow, so CI structurally cannot catch
+# its own. This gate sees the file before it is ever pushed.
 gate() { # gate <label> <cmd>...
   local out
   if ! out=$("${@:2}" 2>&1); then
@@ -58,6 +67,7 @@ gate() { # gate <label> <cmd>...
   fi
 }
 
+gate 'actionlint found workflow errors' uv run actionlint
 gate 'ruff found lint errors' uv run ruff check .
 gate 'ruff found formatting drift' uv run ruff format --check .
 gate 'ty reported type errors' uv run ty check .
