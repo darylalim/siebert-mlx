@@ -2,8 +2,10 @@
 
 Complement the unit tests in test_streamlit_app.py by exercising the script
 top-to-bottom: widget rendering, button clicks, session_state mutations, and
-the conditional reveal of the column selector after data is loaded. Model
-loading is mocked at the conftest level so no network access is required.
+the conditional reveal of the column selector after data is loaded. The weight
+download is mocked at the conftest level, but AutoConfig/AutoTokenizer are not,
+so these still need the hub or a warm ~/.cache/huggingface for ~1.2 MB of
+config/tokenizer files -- a cold cache with no network fails at collection.
 """
 
 from pathlib import Path
