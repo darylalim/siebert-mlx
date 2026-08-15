@@ -160,6 +160,30 @@ class TestLoadModel:
             "siebert/sentiment-roberta-large-english", token=None
         )
 
+    @patch.dict("os.environ", {"HF_TOKEN": ""}, clear=True)
+    @patch("streamlit_app._ensure_safetensors", return_value="/fake/local/dir")
+    @patch("streamlit_app.AutoTokenizer")
+    @patch("streamlit_app.AutoConfig")
+    @patch("streamlit_app.RobertaForSequenceClassification")
+    def test_blank_token_is_normalized_to_none(
+        self, mock_model_cls, mock_config_cls, mock_tok_cls, mock_ensure
+    ):
+        """CI passes HF_TOKEN from a secret that may not exist, arriving as ""."""
+        mock_tok_cls.from_pretrained.return_value = MagicMock()
+        load_model.clear()
+        load_model()
+
+        mock_config_cls.from_pretrained.assert_called_once_with(
+            "siebert/sentiment-roberta-large-english",
+            token=None,
+        )
+        mock_ensure.assert_called_once_with(
+            "siebert/sentiment-roberta-large-english", None
+        )
+        mock_tok_cls.from_pretrained.assert_called_once_with(
+            "siebert/sentiment-roberta-large-english", token=None
+        )
+
     @patch("streamlit_app._ensure_safetensors", return_value="/fake/local/dir")
     @patch("streamlit_app.hf_logging")
     @patch("streamlit_app.AutoTokenizer")

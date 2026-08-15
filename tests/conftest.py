@@ -31,6 +31,33 @@ _save_patch.start()
 _PATCHES = (_model_patch, _download_patch, _torch_load_patch, _save_patch)
 
 
+def pytest_addoption(parser):
+    parser.addoption(
+        "--integration",
+        action="store_true",
+        default=False,
+        help="run tests marked `integration`, which load the real ~1.4 GB checkpoint",
+    )
+
+
+def pytest_collection_modifyitems(config, items):
+    """Skip `integration` tests unless --integration is passed.
+
+    Skipping rather than deselecting via `-m`: a `-m 'not integration'` in
+    addopts makes a path-targeted run of the integration module collect nothing
+    and exit 5, which breaks the `pytest tests/<file>` pattern the docs teach
+    for every other suite. Skipped tests report a reason and exit 0.
+    """
+    if config.getoption("--integration"):
+        return
+    skip_integration = pytest.mark.skip(
+        reason="needs --integration (loads the real ~1.4 GB checkpoint)"
+    )
+    for item in items:
+        if "integration" in item.keywords:
+            item.add_marker(skip_integration)
+
+
 @pytest.fixture(scope="module")
 def real_model():
     """Yield ``(model, tokenizer)`` from the actual checkpoint, mocks lifted.
@@ -49,9 +76,15 @@ def real_model():
 
     import streamlit_app
 
-    for patcher in reversed(_PATCHES):
-        patcher.stop()
+    # Track what actually stopped: if a stop() raises mid-loop, restarting only
+    # the ones that stopped keeps the rest single-started. Leaving the loop
+    # outside the try would strand the mocks off for the whole session, and
+    # every later test would then attempt a live download.
+    stopped = []
     try:
+        for patcher in reversed(_PATCHES):
+            patcher.stop()
+            stopped.append(patcher)
         with patch.multiple(
             streamlit_app,
             RobertaForSequenceClassification=mlx_transformers.models.RobertaForSequenceClassification,
@@ -63,5 +96,5 @@ def real_model():
             finally:
                 streamlit_app.load_model.clear()
     finally:
-        for patcher in _PATCHES:
+        for patcher in reversed(stopped):
             patcher.start()

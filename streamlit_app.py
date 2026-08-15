@@ -61,7 +61,10 @@ def _ensure_safetensors(model_path: str, token: str | None) -> Path:
 def load_model():
     """Load model and tokenizer once via @st.cache_resource in float16."""
     model_path = "siebert/sentiment-roberta-large-english"
-    token = os.environ.get("HF_TOKEN")
+    # `or None` because CI passes HF_TOKEN through from a secret that may not
+    # exist, which arrives as "" rather than unset; huggingface_hub wants None
+    # for an anonymous download, not an empty string.
+    token = os.environ.get("HF_TOKEN") or None
     hf_logging.set_verbosity_error()
     config = AutoConfig.from_pretrained(model_path, token=token)
     local_dir = _ensure_safetensors(model_path, token)

@@ -13,10 +13,13 @@ dependencies = [
     # Modern theming keys + st.container(horizontal=True) need >=1.58.0.
     "streamlit>=1.58.0,<2.0",
     "transformers",
-    # Direct imports in _ensure_safetensors: the SiEBERT repo ships only
-    # pytorch_model.bin, and mlx-transformers >=0.3.0 rejects .bin checkpoints
-    # outright ("supports safetensors only") and no longer depends on torch, so
-    # the one-time conversion has to bring its own.
+    # Both are imported directly by _ensure_safetensors, so both are declared
+    # here regardless of who else pulls them in (safetensors still arrives via
+    # mlx-transformers and transformers; torch no longer arrives at all, since
+    # mlx-transformers 0.3.0 dropped it and now rejects .bin checkpoints
+    # outright). torch is ~515 MB and exists purely for the one-time
+    # pytorch_model.bin -> safetensors conversion, because the SiEBERT repo
+    # ships no safetensors on `main`. Drop it if that ever changes upstream.
     "torch",
     "safetensors",
 ]
@@ -34,8 +37,9 @@ combine-as-imports = true
 [tool.pytest.ini_options]
 pythonpath = ["."]
 markers = [
-    "integration: loads the real ~1.4 GB checkpoint; deselected by default, run with `-m integration`",
+    "integration: loads the real ~1.4 GB checkpoint; skipped unless `--integration` is passed",
 ]
-# Deselect by default so the plain `pytest` used by the Stop hook and by CI's
-# fast job stays offline. A `-m` on the command line overrides this one.
-addopts = "-m 'not integration'"
+# --strict-markers turns a typo'd marker into a collection error. Without it,
+# `@pytest.mark.integraton` would not match conftest's skip hook and the test
+# would run for real inside the offline Stop hook and CI `check` job.
+addopts = "--strict-markers"

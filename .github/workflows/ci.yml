@@ -49,7 +49,12 @@ jobs:
     # mlx-transformers 0.3.0 float16 -> float32 encoder shift slipped through.
     # Split into its own job because it loads the real checkpoint; the fast
     # `check` job stays offline.
+    #
+    # `needs: check` so a lint/format/type/unit failure doesn't also spend a
+    # 1.4 GB download and a multi-minute conversion to tell you the same thing.
+    needs: check
     runs-on: macos-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -59,10 +64,16 @@ jobs:
           enable-cache: true
           cache-dependency-glob: uv.lock
 
-      # The checkpoint is public, so no HF_TOKEN is needed. Caching covers both
-      # the ~1.4 GB pytorch_model.bin and the safetensors that
-      # _ensure_safetensors writes beside it, so reruns skip the conversion
-      # too. Bump the key suffix to force a re-download.
+      # Caching covers both the ~1.4 GB pytorch_model.bin and the safetensors
+      # that _ensure_safetensors writes beside it, so warm reruns skip the
+      # download *and* the conversion.
+      #
+      # The key is exact and static, which is the cheap choice, not the clever
+      # one: an exact hit means actions/cache skips the save step, so this entry
+      # never refreshes on its own. If the model repo ever moves `main` to a new
+      # revision, snapshot_download wants a snapshot dir this cache does not
+      # have, and every run silently pays the full download + conversion until
+      # somebody bumps the suffix below. That is the lever -- bump `-v1`.
       - name: Cache Hugging Face hub
         uses: actions/cache@v4
         with:
@@ -72,5 +83,12 @@ jobs:
       - name: Sync dependencies
         run: uv sync --frozen
 
+      # The checkpoint is public, so no token is required to be *authorized*.
+      # HF_TOKEN is still passed when the secret exists, because anonymous
+      # downloads from shared Actions egress IPs are the ones that get 429'd,
+      # and a cold cache would then fail for a reason unrelated to this code.
+      # Unset secret -> empty string -> load_model's `or None` keeps it anonymous.
       - name: Integration test
-        run: uv run pytest -m integration -q
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: uv run pytest --integration -m integration -q

@@ -61,10 +61,17 @@ On first launch the SiEBERT model (~1.3 GB) is downloaded from Hugging Face and 
 ## Testing
 
 ```bash
-uv run pytest                              # all tests
+uv run pytest                              # unit + flow tests (integration skipped)
 uv run pytest tests/test_streamlit_app.py  # unit tests
 uv run pytest tests/test_app_flow.py       # AppTest flow tests
+uv run pytest --integration                # + the real-checkpoint tests
 ```
+
+Model loading is mocked everywhere except `tests/test_inference_integration.py`,
+which loads the real checkpoint and pins what the model actually computes — the
+weight/logit dtypes, the label mapping, and a few confidences. Those are skipped
+unless you pass `--integration`, because on a cold cache they download ~1.4 GB
+and convert it to safetensors.
 
 ## Development
 
@@ -76,7 +83,8 @@ uv run ruff format --check . # format check
 uv run ty check .            # type check
 ```
 
-CI (`.github/workflows/ci.yml`) runs these same checks plus the test suite on macOS.
+CI (`.github/workflows/ci.yml`) runs these same checks plus the test suite on
+macOS, then a second job runs the integration tests against the real checkpoint.
 
 ## Citation
 

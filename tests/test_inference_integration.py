@@ -17,27 +17,40 @@ different class of regression -- a changed checkpoint, tokenizer, softmax axis,
 or id2label mapping -- all of which move confidences far more than the
 tolerance.
 
-Marked ``integration`` and deselected by default (see ``[tool.pytest
-.ini_options]`` in pyproject.toml) because they load the real ~1.4 GB
-checkpoint. Run them with::
+Marked ``integration`` and skipped by default (see ``pytest_collection_modify
+items`` in conftest.py) because they load the real ~1.4 GB checkpoint. Run them
+with::
 
-    uv run pytest -m integration
+    uv run pytest --integration
 """
 
 import mlx.core as mx  # ty: ignore[unresolved-import]
 import pandas as pd
 import pytest
 
-from streamlit_app import process_dataframe
+from streamlit_app import BATCH_SIZE, process_dataframe
 
 pytestmark = pytest.mark.integration
 
 # Deliberately unambiguous inputs, so the labels are stable properties of the
 # model rather than of a decision boundary. Confidences are what
-# process_dataframe writes, i.e. already rounded to 4 decimals.
+# process_dataframe writes, i.e. already rounded to 4 decimals. The third entry
+# is long on purpose (77 tokens vs ~10): batched with the short ones under
+# padding=True it forces most of a batch to be pad positions, which is exactly
+# what get_extended_attention_mask has to neutralize.
 PINNED = [
     ("I absolutely love this product, it works perfectly.", "positive", 0.9989),
     ("This is terrible and it broke immediately.", "negative", 0.9995),
+    (
+        "I ordered this coffee grinder after weeks of research and it has "
+        "exceeded every expectation I had. The burrs are consistent, the grind "
+        "settings are genuinely distinct from one another, and cleanup takes "
+        "under a minute. It is quiet enough to use early in the morning without "
+        "waking anyone, and after three months of daily use it still performs "
+        "exactly as it did on the first day.",
+        "positive",
+        0.9989,
+    ),
 ]
 
 # Loose enough for kernel-level jitter across mlx versions and Apple Silicon
@@ -85,6 +98,37 @@ def test_pinned_confidences_and_labels(real_model):
 
     for (text, label, confidence), (_, row) in zip(
         PINNED, result.iterrows(), strict=True
+    ):
+        assert row["Sentiment"] == label, text
+        assert row["Confidence"] == pytest.approx(
+            confidence, abs=CONFIDENCE_TOLERANCE
+        ), text
+
+
+def test_results_are_stable_across_batch_boundaries(real_model):
+    """Same texts, more rows than BATCH_SIZE, interleaved so padding varies.
+
+    The single-batch test above never enters process_dataframe's chunking loop,
+    so it cannot catch a mis-sliced `indices[start:end]` mapping results onto
+    the wrong rows, nor padding-length sensitivity. Repeating the pinned texts
+    past BATCH_SIZE puts each one in a different batch position with a
+    different pad width, and every row still has to match its own pin.
+    """
+    model, tokenizer = real_model
+
+    repeats = 4
+    rows = [PINNED[index % len(PINNED)] for index in range(len(PINNED) * repeats)]
+    assert len(rows) > BATCH_SIZE, "must span more than one batch to be meaningful"
+
+    result = process_dataframe(
+        pd.DataFrame({"text": [text for text, _, _ in rows]}),
+        "text",
+        model,
+        tokenizer,
+    )
+
+    for (text, label, confidence), (_, row) in zip(
+        rows, result.iterrows(), strict=True
     ):
         assert row["Sentiment"] == label, text
         assert row["Confidence"] == pytest.approx(
