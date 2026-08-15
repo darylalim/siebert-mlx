@@ -1,4 +1,5 @@
 import os
+import tempfile
 from pathlib import Path
 from typing import cast
 
@@ -53,7 +54,26 @@ def _ensure_safetensors(model_path: str, token: str | None) -> Path:
         pt_weights = torch.load(
             local_dir / "pytorch_model.bin", map_location="cpu", weights_only=True
         )
-        save_file(pt_weights, safetensors_path)
+        # Convert through a sibling temp file and os.replace (atomic on POSIX,
+        # same directory so it never crosses a filesystem). Writing straight to
+        # model.safetensors means an interrupted conversion -- Ctrl-C, OOM, a
+        # full disk -- leaves a truncated 1.4 GB file that the exists() check
+        # above then accepts forever, so every later load fails on the corrupt
+        # header until somebody deletes it by hand. The unique temp name also
+        # keeps two concurrent converters (the app and `pytest --integration`)
+        # off each other's partial writes; whichever replaces last wins, and
+        # both files were complete. The finally clears the temp file on every
+        # failure path and is a no-op once replace has consumed it.
+        fd, tmp_name = tempfile.mkstemp(
+            dir=local_dir, prefix="model.safetensors.", suffix=".tmp"
+        )
+        os.close(fd)
+        tmp_path = Path(tmp_name)
+        try:
+            save_file(pt_weights, tmp_path)
+            os.replace(tmp_path, safetensors_path)
+        finally:
+            tmp_path.unlink(missing_ok=True)
     return local_dir
 
 

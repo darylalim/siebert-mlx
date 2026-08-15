@@ -79,9 +79,31 @@ class TestEnsureSafetensors:
         mock_torch_load.assert_called_once_with(
             pt_path, map_location="cpu", weights_only=True
         )
-        mock_save.assert_called_once_with(
-            {"weight": "data"}, tmp_path / "model.safetensors"
-        )
+        # Written to a sibling temp file, then renamed into place -- so the
+        # path save_file sees is a *.tmp next to the destination, not the
+        # destination itself.
+        (weights, written_to) = mock_save.call_args.args
+        assert weights == {"weight": "data"}
+        assert written_to.parent == tmp_path
+        assert written_to.name.endswith(".tmp")
+        assert (tmp_path / "model.safetensors").exists()
+        assert list(tmp_path.glob("*.tmp")) == []
+
+    @patch("safetensors.torch.save_file", side_effect=OSError("No space left"))
+    @patch("torch.load", return_value={"weight": "data"})
+    @patch("streamlit_app.snapshot_download")
+    def test_failed_conversion_leaves_no_partial_checkpoint(
+        self, mock_download, mock_torch_load, mock_save, tmp_path
+    ):
+        """A half-written model.safetensors would be accepted forever after."""
+        (tmp_path / "pytorch_model.bin").touch()
+        mock_download.return_value = str(tmp_path)
+
+        with pytest.raises(OSError, match="No space left"):
+            _ensure_safetensors("model/name", "token")
+
+        assert not (tmp_path / "model.safetensors").exists()
+        assert list(tmp_path.glob("*.tmp")) == []
 
     @patch("streamlit_app.snapshot_download")
     def test_skips_conversion_when_safetensors_exists(self, mock_download, tmp_path):

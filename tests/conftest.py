@@ -5,7 +5,7 @@ executes load_model() at import time, which would otherwise attempt to
 download model weights and connect to the network.
 """
 
-from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -16,9 +16,18 @@ _model_patch = patch(
 )
 _model_patch.start()
 
+# A throwaway directory, not this one: _ensure_safetensors writes a real file
+# into whatever snapshot_download returns (the conversion is only mocked at
+# save_file, and the temp-file + os.replace dance materializes the destination
+# either way), so pointing it at tests/ would drop a stray model.safetensors in
+# the repo on every collection -- which then makes exists() skip the conversion
+# on later runs. Held at module scope so it outlives the session and is cleaned
+# up at interpreter exit.
+_snapshot_dir = TemporaryDirectory(prefix="siebert-mlx-test-snapshot-")
+
 _download_patch = patch(
     "huggingface_hub.snapshot_download",
-    return_value=str(Path(__file__).parent),
+    return_value=_snapshot_dir.name,
 )
 _download_patch.start()
 
