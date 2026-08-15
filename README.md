@@ -86,6 +86,24 @@ uv run ty check .            # type check
 CI (`.github/workflows/ci.yml`) runs these same checks plus the test suite on
 macOS, then a second job runs the integration tests against the real checkpoint.
 
+### Releases
+
+A third CI job publishes a GitHub Release automatically. **Bumping
+`[project].version` in `pyproject.toml` cuts a public release** once that commit
+passes both CI jobs on `main` — so treat a version bump as its own change, not
+something to fold into an unrelated PR. Release notes are generated from the
+commit and PR subjects since the previous tag, so keep those tidy.
+
+The job is a no-op when a tag for the current version already exists, and a PEP
+440 pre-release version (`0.8.0rc1`) is marked as a pre-release rather than
+becoming "Latest". To release without a version bump — re-cutting a deleted
+release, or tagging an older commit — push the tag by hand and
+`.github/workflows/release.yml` handles it:
+
+```bash
+git tag v0.8.0 && git push origin v0.8.0
+```
+
 ## Citation
 
 If you use SiEBERT in your work, please cite the following paper:

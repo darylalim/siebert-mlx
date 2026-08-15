@@ -7,9 +7,7 @@ on:
 
 concurrency:
   group: ci-${{ github.ref }}
-  # Only cancel superseded PR runs. Cancelling on main would leave a commit with
-  # no green CI -- and the release job below publishes only from a green main.
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: true
 
 # Least privilege by default; the release job re-grants write to itself.
 permissions:
@@ -28,13 +26,11 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v10.0.1
         with:
+          # Explicit rather than the `auto` default, which disables the cache on
+          # tag-push and release events -- this job should keep it if the trigger
+          # set ever grows. The default cache-dependency-glob already keys on
+          # pyproject.toml and uv.lock, so it is deliberately not overridden.
           enable-cache: true
-          # setup-uv's default glob is **/*requirements*.txt, which matches
-          # nothing here -- without this the cache never invalidates on a relock.
-          cache-dependency-glob: uv.lock
-          # setup-uv v9 flipped this default to false. Left at the pre-v9 value so
-          # the version bump changed the action, not this repo's cache footprint.
-          prune-cache: true
 
       # --frozen fails CI if uv.lock is stale.
       - name: Sync dependencies
@@ -68,8 +64,6 @@ jobs:
         uses: astral-sh/setup-uv@v10.0.1
         with:
           enable-cache: true
-          cache-dependency-glob: uv.lock
-          prune-cache: true
 
       # Covers the download *and* the safetensors conversion. The key is exact
       # and static, so actions/cache skips the save on a hit and this entry never
@@ -96,10 +90,11 @@ jobs:
   release:
     # Publishes a GitHub Release as soon as a bumped `version` in pyproject.toml
     # lands green on main. `needs` both jobs above, so a release is never cut from
-    # a commit CI has not verified. `on.push.branches` already limits pushes to
-    # main, so the event check alone is enough to keep this off pull requests.
+    # a commit CI has not verified. The ref is asserted here rather than inherited
+    # from `on.push.branches`, so widening that trigger later cannot leak a public
+    # release out of an unreviewed branch.
     needs: [check, integration]
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     # ubuntu, not macos: this job reads pyproject.toml and calls the GitHub API,
     # never imports mlx, so it needs no arm64 wheels and no dependency sync.
     runs-on: ubuntu-latest
@@ -115,29 +110,54 @@ jobs:
           # Nothing is synced here, so a cache entry would only be dead weight.
           enable-cache: false
 
-      # Idempotent by existence check rather than by diffing HEAD^: a git diff
-      # misses a bump that arrives behind a merge commit's second parent, and
-      # re-fires on a workflow re-run. "Does this release already exist" is the
-      # right question in every one of those cases.
-      #
-      # `gh release create` creates the tag itself (--target), and --generate-notes
-      # builds the notes server-side, so a shallow checkout is enough.
-      #
-      # That tag is created with the GITHUB_TOKEN, and GitHub does not start a
-      # workflow run from a GITHUB_TOKEN event -- so release.yml does NOT also fire
-      # on it. That suppression is the only thing keeping the two release paths
-      # from double-publishing; do not swap this for a PAT without removing one.
+      # `gh release create --target` creates the tag itself and --generate-notes
+      # builds the notes server-side, so a shallow checkout and no tag push are
+      # enough. That tag is created with the GITHUB_TOKEN, and GitHub does not
+      # start a workflow run from a GITHUB_TOKEN event -- so release.yml does NOT
+      # also fire on it. That suppression is the only thing keeping the two
+      # release paths from double-publishing; do not swap in a PAT without
+      # removing one of them.
       - name: Publish release on version bump
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
           version="v$(uv version --short)"
-          if gh release view "$version" >/dev/null 2>&1; then
-            echo "$version is already released; nothing to do."
+
+          # Keyed on the tag rather than the release, and by existence rather than
+          # by diffing HEAD^. A diff misses a bump arriving behind a merge commit's
+          # second parent and re-fires on a workflow re-run; asking what already
+          # exists is correct for merge commits, squash merges and re-runs alike.
+          # The tag specifically, because deleting a release to re-cut it by hand
+          # leaves the tag behind, and that tag is the signal to stay out of the way.
+          #
+          # Assigned before the test, not piped into it: a transient API error then
+          # aborts the job under `set -e` instead of reading as "no tag found" and
+          # falling through to an unconditional create.
+          tags="$(gh api --paginate "repos/$GITHUB_REPOSITORY/tags" --jq '.[].name')"
+          if grep -qxF "$version" <<<"$tags"; then
+            echo "$version is already tagged; nothing to do."
             exit 0
           fi
+
+          # --target is the commit this run verified, which is not necessarily the
+          # commit that bumped the version: if the bump's own run was superseded,
+          # the release is cut from the newer tested tree rather than an untested one.
+          #
+          # Built as an array that is never empty, rather than appending a possibly
+          # empty one: expanding "${arr[@]}" on an empty array under `set -u` is an
+          # unbound-variable error before bash 4.4, and a publishing path should not
+          # rest on the runner image's bash version.
+          create=(gh release create "$version"
+                  --title "$version"
+                  --generate-notes
+                  --target "$GITHUB_SHA")
+
+          # PEP 440 pre-releases (0.8.0rc1, 1.0.0b2, 0.9.0.dev1) must not be able to
+          # take the "Latest" slot on the releases page or in the README tag badge.
+          if [[ "$version" =~ (a|b|rc)[0-9]+$|\.dev[0-9]+$ ]]; then
+            create+=(--prerelease)
+          fi
+
           echo "Publishing $version from $GITHUB_SHA"
-          gh release create "$version" \
-            --title "$version" \
-            --generate-notes \
-            --target "$GITHUB_SHA"
+          "${create[@]}"
