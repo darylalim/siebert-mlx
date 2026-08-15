@@ -26,8 +26,8 @@ jobs:
           cache-dependency-glob: uv.lock
 
       # torch/safetensors (used by the model-conversion path and patched in
-      # tests/conftest.py) arrive transitively via mlx-transformers, so a plain
-      # sync installs them. --frozen fails CI if uv.lock is stale.
+      # tests/conftest.py) are direct production deps, so a plain sync installs
+      # them. --frozen fails CI if uv.lock is stale.
       - name: Sync dependencies
         run: uv sync --frozen
 

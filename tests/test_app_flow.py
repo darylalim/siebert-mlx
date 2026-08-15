@@ -6,12 +6,18 @@ the conditional reveal of the column selector after data is loaded. Model
 loading is mocked at the conftest level so no network access is required.
 """
 
+from pathlib import Path
+
 import pandas as pd
 from streamlit.testing.v1 import AppTest
 
 from streamlit_app import STYLE_ROW_CAP
 
-APP_PATH = "streamlit_app.py"
+# Absolute, because AppTest.from_file resolves a *relative* path against the
+# calling file (this module's tests/ directory) as of streamlit 1.61, where it
+# previously resolved against the working directory. An absolute path is used
+# as given under both.
+APP_PATH = str(Path(__file__).parent.parent / "streamlit_app.py")
 TIMEOUT = 30
 
 

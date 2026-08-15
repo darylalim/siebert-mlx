@@ -10,15 +10,19 @@ dependencies = [
     "mlx-transformers",
     "python-dotenv",
     "pandas",
-    "streamlit",
+    # Modern theming keys + st.container(horizontal=True) need >=1.58.0.
+    "streamlit>=1.58.0,<2.0",
     "transformers",
+    # Direct imports in _ensure_safetensors: the SiEBERT repo ships only
+    # pytorch_model.bin, and mlx-transformers >=0.3.0 rejects .bin checkpoints
+    # outright ("supports safetensors only") and no longer depends on torch, so
+    # the one-time conversion has to bring its own.
+    "torch",
+    "safetensors",
 ]
 
 [dependency-groups]
 dev = ["pytest", "ruff", "ty"]
-
-[tool.uv]
-override-dependencies = ["streamlit>=1.58.0,<2.0"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]

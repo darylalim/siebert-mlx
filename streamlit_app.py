@@ -2,7 +2,10 @@ import os
 from pathlib import Path
 from typing import cast
 
-import mlx.core as mx
+# mlx 0.32.0 ships no .pyi stubs for its compiled `core` extension (0.31.2 did),
+# and ty cannot resolve a binary module without one. Remove the suppression once
+# upstream restores the stubs.
+import mlx.core as mx  # ty: ignore[unresolved-import]
 import pandas as pd
 import streamlit as st
 from dotenv import load_dotenv
