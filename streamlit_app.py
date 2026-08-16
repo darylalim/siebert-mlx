@@ -22,19 +22,22 @@ load_dotenv()
 
 BATCH_SIZE = 8
 STYLE_ROW_CAP = 2000
+# Pixel cap for free-text columns in the results table. Sized against the
+# centered layout's 736px content cap: the two generated columns plus a narrow
+# id take ~278px, so 300 leaves real headroom instead of the zero slack that
+# 400px ("large") left. Past three-ish text columns nothing fixed can prevent
+# a horizontal scroll, and that is the correct outcome.
+TEXT_COL_WIDTH = 300
 SAMPLE_DATA_PATH = Path(__file__).parent / "samples" / "mixed_sample.csv"
 
 
+def _is_text_dtype(series: pd.Series) -> bool:
+    """String- or object-dtype, matching the pandas 3.0 default `str` dtype."""
+    return pd.api.types.is_string_dtype(series) or pd.api.types.is_object_dtype(series)
+
+
 def detect_text_column(df: pd.DataFrame) -> str | None:
-    return next(
-        (
-            col
-            for col in df.columns
-            if pd.api.types.is_string_dtype(df[col])
-            or pd.api.types.is_object_dtype(df[col])
-        ),
-        None,
-    )
+    return next((col for col in df.columns if _is_text_dtype(df[col])), None)
 
 
 def _ensure_safetensors(model_path: str, token: str | None) -> Path:
@@ -185,7 +188,7 @@ def _reset():
     _clear_results()
 
 
-def _render_results(result_df, source_name, text_col):
+def _render_results(result_df, source_name):
     if result_df["Sentiment"].eq("").all():
         st.info(
             "All values in this column are empty. No classification was performed.",
@@ -248,32 +251,39 @@ def _render_results(result_df, source_name, text_col):
                 display_df = result_df.style.map(
                     lambda v: sentiment_tint.get(v, ""), subset=["Sentiment"]
                 )
+            # Without an explicit width a column is "sized to fit the cell
+            # contents", so one long review takes the row and pushes
+            # Confidence's percentage off the grid — the centered layout caps
+            # content at 736px at any window size, so a wider browser cannot
+            # rescue it. Cap every *free-text* source column rather than only
+            # the classified one: a second text column blows the same budget.
+            # Numeric columns stay auto-sized because they are already narrow,
+            # and padding an `id` out to TEXT_COL_WIDTH would spend the very
+            # budget this cap exists to protect. Assigning the two generated
+            # keys afterwards makes this collision-proof — a CSV column already
+            # named Sentiment or Confidence cannot silently drop its width.
+            column_config = {
+                col: st.column_config.TextColumn(width=TEXT_COL_WIDTH)
+                for col in result_df.columns
+                if col not in ("Sentiment", "Confidence")
+                and _is_text_dtype(result_df[col])
+            }
+            column_config["Sentiment"] = st.column_config.TextColumn(
+                "Sentiment",
+                help="Predicted sentiment (blank for empty or missing text).",
+            )
+            column_config["Confidence"] = st.column_config.ProgressColumn(
+                "Confidence",
+                help="Model confidence in the predicted sentiment.",
+                format="percent",
+                min_value=0.0,
+                max_value=1.0,
+            )
             st.dataframe(
                 display_df,
                 width="stretch",
                 hide_index=True,
-                column_config={
-                    # Without an explicit width a column is "sized to fit the
-                    # cell contents", so the free-text column takes whatever a
-                    # long review needs and pushes Confidence's percentage past
-                    # the grid's right edge (the centered layout caps content at
-                    # 736px at any window size, so widening the browser cannot
-                    # rescue it). Capping the already-truncated preview is the
-                    # cheap side of that trade. Slack redistributes evenly, so
-                    # the table still fills its card.
-                    text_col: st.column_config.TextColumn(width="large"),
-                    "Sentiment": st.column_config.TextColumn(
-                        "Sentiment",
-                        help="Predicted sentiment (blank for empty or missing text).",
-                    ),
-                    "Confidence": st.column_config.ProgressColumn(
-                        "Confidence",
-                        help="Model confidence in the predicted sentiment.",
-                        format="percent",
-                        min_value=0.0,
-                        max_value=1.0,
-                    ),
-                },
+                column_config=column_config,
             )
 
     # Serialize lazily: the callable runs only when Download is clicked, not on
@@ -367,4 +377,4 @@ if df is not None:
         # Invalidate when the selected column no longer matches what was run.
         result_df = st.session_state.get("result_df")
         if result_df is not None and st.session_state.get("result_col") == text_column:
-            _render_results(result_df, source_name, text_column)
+            _render_results(result_df, source_name)

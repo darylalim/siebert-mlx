@@ -9,7 +9,9 @@ from streamlit_app import (
     BATCH_SIZE,
     SAMPLE_DATA_PATH,
     STYLE_ROW_CAP,
+    TEXT_COL_WIDTH,
     _ensure_safetensors,
+    _render_results,
     detect_text_column,
     load_model,
     process_dataframe,
@@ -527,3 +529,65 @@ class TestProcessDataframe:
         )
         for val in result["Confidence"]:
             assert 0.0 <= val <= 1.0
+
+
+# --- _render_results column_config ---
+
+
+class TestRenderResultsColumnConfig:
+    """Pins the width cap that keeps Confidence's percentage on the grid.
+
+    Without it a free-text column is "sized to fit the cell contents" and
+    pushes Confidence past the 736px content cap, clipping the percentage at
+    every window width. Asserted against the kwargs we pass to st.dataframe —
+    our own call, not a Streamlit proto — so it does not churn across versions.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _mock_st(self):
+        with patch("streamlit_app.st") as mock_st:
+            self.mock_st = mock_st
+            yield
+
+    def _config_for(self, df):
+        _render_results(df, "sample")
+        return self.mock_st.dataframe.call_args.kwargs["column_config"]
+
+    def test_caps_the_free_text_column(self):
+        config = self._config_for(
+            pd.DataFrame(
+                {
+                    "text": ["good", "bad"],
+                    "Sentiment": ["positive", "negative"],
+                    "Confidence": [0.99, 0.98],
+                }
+            )
+        )
+        assert "text" in config
+        self.mock_st.column_config.TextColumn.assert_any_call(width=TEXT_COL_WIDTH)
+
+    def test_leaves_numeric_columns_auto_sized(self):
+        # Padding a 2-char id out to TEXT_COL_WIDTH would spend the budget the
+        # cap exists to protect, so numeric columns must be left alone.
+        config = self._config_for(
+            pd.DataFrame(
+                {
+                    "id": [1, 2],
+                    "text": ["good", "bad"],
+                    "Sentiment": ["positive", "negative"],
+                    "Confidence": [0.99, 0.98],
+                }
+            )
+        )
+        assert "text" in config
+        assert "id" not in config
+
+    def test_generated_columns_survive_a_name_collision(self):
+        # process_dataframe overwrites a source column named Sentiment, so by
+        # here only the generated one exists; it must keep its own config
+        # rather than being handed a width entry.
+        config = self._config_for(
+            pd.DataFrame({"Sentiment": ["positive"], "Confidence": [0.99]})
+        )
+        assert set(config) == {"Sentiment", "Confidence"}
+        self.mock_st.column_config.ProgressColumn.assert_called_once()
