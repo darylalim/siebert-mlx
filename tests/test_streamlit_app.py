@@ -8,6 +8,7 @@ import pytest
 from streamlit_app import (
     BATCH_SIZE,
     CONFIDENCE_COL,
+    LONG_TEXT_CHARS,
     SAMPLE_DATA_PATH,
     SENTIMENT_COL,
     STYLE_ROW_CAP,
@@ -15,6 +16,7 @@ from streamlit_app import (
     GeneratedColumns,
     _ensure_safetensors,
     _generated_columns,
+    _is_long_text,
     _render_results,
     _unique_column_name,
     detect_text_column,
@@ -25,6 +27,16 @@ from streamlit_app import (
 # Module-level, not an inline default: GeneratedColumns(...) in a signature is a
 # call in a default argument and trips ruff B008.
 PLAIN_COLS = GeneratedColumns(SENTIMENT_COL, CONFIDENCE_COL)
+
+# Width fixtures use a realistic review, not "good"/"bad". A 4-char column
+# auto-sizes far narrower than TEXT_COL_WIDTH and is deliberately left
+# uncapped, so a short fixture would assert the cap against an input that
+# never gets it -- which is exactly how these tests read before the
+# length-aware predicate landed.
+LONG_REVIEW = (
+    "This product exceeded every expectation I had and I would buy it again today"
+)
+SHORT_LABEL = "positive"
 
 # --- BATCH_SIZE ---
 
@@ -68,6 +80,47 @@ class TestDetectTextColumn:
 
     def test_returns_none_for_empty_dataframe(self):
         assert detect_text_column(pd.DataFrame()) is None
+
+
+# --- _is_long_text ---
+
+
+class TestIsLongText:
+    """The width cap is worth spending only above `LONG_TEXT_CHARS`.
+
+    Measured against a `width="content"` grid: one text column auto-sizes to
+    281px at 48 characters and 305px at 52, so `TEXT_COL_WIDTH` (300px) is
+    crossed at ~51. Below that the cap makes a column wider than it would
+    have been.
+    """
+
+    def test_short_values_are_not_long(self):
+        assert not _is_long_text(pd.Series(["positive", "negative"]), "label")
+
+    def test_long_values_are_long(self):
+        assert _is_long_text(pd.Series([LONG_REVIEW]), "text")
+
+    def test_boundary_is_exclusive(self):
+        # Exactly at the threshold the cap is neutral, so it is not spent.
+        assert not _is_long_text(pd.Series(["x" * LONG_TEXT_CHARS]), "t")
+        assert _is_long_text(pd.Series(["x" * (LONG_TEXT_CHARS + 1)]), "t")
+
+    def test_measures_the_longest_row_not_the_average(self):
+        # One long review in a column of short ones still forces the width.
+        assert _is_long_text(pd.Series(["ok", "ok", LONG_REVIEW]), "text")
+
+    def test_header_counts_toward_the_width(self):
+        assert _is_long_text(pd.Series(["ok"]), "n" * (LONG_TEXT_CHARS + 1))
+
+    def test_empty_column_is_not_long(self):
+        assert not _is_long_text(pd.Series([], dtype="object"), "text")
+
+    def test_all_missing_column_is_not_long(self):
+        # .str.len().max() is NaN here; int(NaN) would raise.
+        assert not _is_long_text(pd.Series([None, None], dtype="object"), "text")
+
+    def test_non_string_column_label_does_not_raise(self):
+        assert not _is_long_text(pd.Series(["ok"]), 7)
 
 
 # --- generated column names ---
@@ -710,11 +763,18 @@ class TestRenderResultsColumnConfig:
         _render_results(df, "sample", generated_cols)
         return self.mock_st.dataframe.call_args.kwargs["column_config"]
 
+    def test_long_review_fixture_actually_exceeds_the_threshold(self):
+        # Guards every fixture below: if LONG_TEXT_CHARS is ever raised past
+        # the fixture's length, the width tests would silently stop testing
+        # the cap instead of failing.
+        assert len(LONG_REVIEW) > LONG_TEXT_CHARS
+        assert len(SHORT_LABEL) <= LONG_TEXT_CHARS
+
     def test_caps_the_free_text_column(self):
         config = self._config_for(
             pd.DataFrame(
                 {
-                    "text": ["good", "bad"],
+                    "text": [LONG_REVIEW, LONG_REVIEW],
                     "Sentiment": ["positive", "negative"],
                     "Confidence": [0.99, 0.98],
                 }
@@ -730,7 +790,7 @@ class TestRenderResultsColumnConfig:
             pd.DataFrame(
                 {
                     "id": [1, 2],
-                    "text": ["good", "bad"],
+                    "text": [LONG_REVIEW, LONG_REVIEW],
                     "Sentiment": ["positive", "negative"],
                     "Confidence": [0.99, 0.98],
                 }
@@ -738,6 +798,62 @@ class TestRenderResultsColumnConfig:
         )
         assert "text" in config
         assert "id" not in config
+
+    def test_leaves_short_text_columns_auto_sized(self):
+        # The whole point of the length predicate: an 8-char label column
+        # auto-sizes to ~67px, so capping it at 300 spends 233px of the same
+        # budget the cap protects -- measured as a 206px overflow that pushed
+        # Confidence off the grid on a labeled CSV. Same reasoning as `id`.
+        config = self._config_for(
+            pd.DataFrame(
+                {
+                    "text": [LONG_REVIEW, LONG_REVIEW],
+                    "label": [SHORT_LABEL, SHORT_LABEL],
+                    "Sentiment": ["positive", "negative"],
+                    "Confidence": [0.99, 0.98],
+                }
+            )
+        )
+        assert "text" in config
+        assert "label" not in config
+
+    def test_never_caps_a_numeric_column_even_under_a_long_header(self):
+        # The only case where `_is_text_dtype` still bites. int64/float64
+        # values can never reach LONG_TEXT_CHARS on their own (19 and ~24
+        # characters at most), so `_is_long_text` alone would agree with the
+        # dtype check on every *value* -- but a long enough column *name*
+        # carries a numeric column past the threshold, and configuring it as
+        # a TextColumn would render its numbers as text.
+        long_name = "n" * (LONG_TEXT_CHARS + 1)
+        config = self._config_for(
+            pd.DataFrame(
+                {
+                    long_name: [1, 2],
+                    "text": [LONG_REVIEW, LONG_REVIEW],
+                    "Sentiment": ["positive", "negative"],
+                    "Confidence": [0.99, 0.98],
+                }
+            )
+        )
+        assert long_name not in config
+        assert "text" in config
+
+    def test_caps_on_a_long_header_over_short_values(self):
+        # glide sizes a column to the widest of its content *and* its title,
+        # so the predicate measures the header too. Values are 8 chars; the
+        # name alone is what carries this column past the threshold.
+        long_name = "reviewer sentiment as recorded by the annotation team"
+        assert len(long_name) > LONG_TEXT_CHARS
+        config = self._config_for(
+            pd.DataFrame(
+                {
+                    long_name: [SHORT_LABEL],
+                    "Sentiment": ["positive"],
+                    "Confidence": [0.99],
+                }
+            )
+        )
+        assert long_name in config
 
     def test_generated_columns_are_not_width_capped(self):
         # The generated pair keeps its own config rather than being handed a
@@ -770,8 +886,12 @@ class TestRenderResultsColumnConfig:
         config = self._config_for(
             pd.DataFrame(
                 {
-                    "text": ["good"],
-                    "Sentiment": ["ground truth"],
+                    "text": [LONG_REVIEW],
+                    # Long, so this test still isolates the *exclusion tuple*:
+                    # a short source column is uncapped by the length predicate
+                    # instead, which is a different mechanism with its own test
+                    # (test_does_not_cap_a_short_source_sentiment_column).
+                    "Sentiment": [LONG_REVIEW],
                     "Sentiment (model)": ["positive"],
                     "Confidence": [0.99],
                 }
@@ -782,6 +902,24 @@ class TestRenderResultsColumnConfig:
         assert self.mock_st.column_config.TextColumn.call_count == 3
         self.mock_st.column_config.ProgressColumn.assert_called_once()
 
+    def test_does_not_cap_a_short_source_sentiment_column(self):
+        # The real labeled-CSV shape, and the one that overflowed: an 8-char
+        # ground-truth column must be left auto-sized so Confidence keeps its
+        # place on the grid. Measured 876/670 before, 670/670 after.
+        config = self._config_for(
+            pd.DataFrame(
+                {
+                    "text": [LONG_REVIEW],
+                    "Sentiment": [SHORT_LABEL],
+                    "Sentiment (model)": ["positive"],
+                    "Confidence": [0.99],
+                }
+            ),
+            GeneratedColumns("Sentiment (model)", "Confidence"),
+        )
+        assert set(config) == {"text", "Sentiment (model)", "Confidence"}
+        assert "Sentiment" not in config
+
     def test_keys_both_generated_columns_when_both_are_renamed(self):
         # The only case that pins `column_config[confidence_col]`: with the
         # confidence name left plain, a mutant keyed to the literal
@@ -789,9 +927,9 @@ class TestRenderResultsColumnConfig:
         config = self._config_for(
             pd.DataFrame(
                 {
-                    "text": ["good"],
-                    "Sentiment": ["ground truth"],
-                    "Confidence": ["mine"],
+                    "text": [LONG_REVIEW],
+                    "Sentiment": [LONG_REVIEW],
+                    "Confidence": [LONG_REVIEW],
                     "Sentiment (model)": ["positive"],
                     "Confidence (model)": [0.99],
                 }

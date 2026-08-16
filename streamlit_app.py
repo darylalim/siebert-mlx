@@ -34,6 +34,13 @@ CONFIDENCE_COL = "Confidence"
 # 400px ("large") left. Past three-ish text columns nothing fixed can prevent
 # a horizontal scroll, and that is the correct outcome.
 TEXT_COL_WIDTH = 300
+# Longest cell (or header) a column can hold before the cap is worth spending.
+# Measured, not guessed: rendering one `width="content"` text column at a range
+# of lengths puts the natural width at 281px for 48 characters and 305px for
+# 52, so auto-sizing crosses TEXT_COL_WIDTH at ~51. Below that the cap makes a
+# column *wider* than it would have been and spends the very budget it exists
+# to protect -- the same reason numeric columns are left alone.
+LONG_TEXT_CHARS = 50
 SAMPLE_DATA_PATH = Path(__file__).parent / "samples" / "mixed_sample.csv"
 
 
@@ -44,6 +51,18 @@ def _is_text_dtype(series: pd.Series) -> bool:
 
 def detect_text_column(df: pd.DataFrame) -> str | None:
     return next((col for col in df.columns if _is_text_dtype(df[col])), None)
+
+
+def _is_long_text(series: pd.Series, name: object) -> bool:
+    """True when this column would auto-size wider than `TEXT_COL_WIDTH`.
+
+    The header counts: glide sizes a column to the widest of its content *and*
+    its title, so a short-valued column under a long name is still wide.
+    All-NA and empty columns have no length at all and are never long.
+    """
+    longest = series.astype(str).str.len().max()
+    longest = 0 if pd.isna(longest) else int(longest)
+    return max(len(str(name)), longest) > LONG_TEXT_CHARS
 
 
 def _ensure_safetensors(model_path: str, token: str | None) -> Path:
@@ -358,16 +377,20 @@ def _render_results(result_df, source_name, generated_cols):
             # the classified one: a second text column blows the same budget.
             # Numeric columns stay auto-sized because they are already narrow,
             # and padding an `id` out to TEXT_COL_WIDTH would spend the very
-            # budget this cap exists to protect. The exclusion holds the
-            # *resolved* names, which is what makes it collision-proof now: a
-            # source column named Sentiment is a free-text source column like
-            # any other and correctly gets the cap, while the model's renamed
-            # column keeps the config assigned just below.
+            # budget this cap exists to protect. `_is_long_text` applies that
+            # same reasoning to *short* text columns, which the dtype-only
+            # predicate used to pad out to 300px: a ground-truth Sentiment
+            # column of "positive"/"negative" auto-sizes to 67px, so capping it
+            # cost 233px and pushed Confidence off the grid. The exclusion holds
+            # the *resolved* names, which is what makes it collision-proof: a
+            # source column named Sentiment is a source column like any other,
+            # while the model's renamed column keeps the config assigned below.
             column_config = {
                 col: st.column_config.TextColumn(width=TEXT_COL_WIDTH)
                 for col in result_df.columns
                 if col not in (sentiment_col, confidence_col)
                 and _is_text_dtype(result_df[col])
+                and _is_long_text(result_df[col], col)
             }
             # Both entries drop the positional label: st.column_config documents
             # label=None as "the column name is used", so the header self-syncs
