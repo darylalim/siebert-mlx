@@ -7,9 +7,7 @@
 
 Streamlit application for sentiment classification in English text using [SiEBERT](https://huggingface.co/siebert/sentiment-roberta-large-english) on Apple Silicon with MLX.
 
-| Light theme | Dark theme |
-| :---: | :---: |
-| ![SiEBERT MLX classifying sample data in light mode](docs/screenshot-light.png) | ![SiEBERT MLX classifying sample data in dark mode](docs/screenshot-dark.png) |
+![SiEBERT MLX classifying sample data in dark mode](docs/screenshot-dark.png)
 
 ## Features
 
@@ -20,7 +18,7 @@ Streamlit application for sentiment classification in English text using [SiEBER
 - Sentiment-distribution chart
 - Styled results table with CSV download
 - Results persist across interactions; one-click Reset to start over
-- Light and dark themes
+- Streamlit's built-in light and dark themes, switchable from the settings menu
 - Batched MLX inference in float16 on Apple Silicon
 - Handles empty, whitespace-only, and malformed input
 

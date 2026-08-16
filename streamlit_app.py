@@ -185,7 +185,7 @@ def _reset():
     _clear_results()
 
 
-def _render_results(result_df, source_name):
+def _render_results(result_df, source_name, text_col):
     if result_df["Sentiment"].eq("").all():
         st.info(
             "All values in this column are empty. No classification was performed.",
@@ -225,12 +225,11 @@ def _render_results(result_df, source_name):
                     "Count": [pos_count, neg_count],
                 }
             )
-            # Pin an explicit bar color: the default series color is
-            # near-invisible against the dark theme's surface. This mid-blue
-            # (the dark-theme primaryColor) reads on both light and dark.
-            st.bar_chart(
-                dist_df, x="Sentiment", y="Count", horizontal=True, color="#3B82F6"
-            )
+            # No explicit color: Streamlit's built-in themes ship separate
+            # categorical palettes per mode (light leads with #0068c9, dark
+            # with #83c9ff), so the default bar adapts its lightness to the
+            # background — which a single pinned hex cannot do.
+            st.bar_chart(dist_df, x="Sentiment", y="Count", horizontal=True)
 
         with st.container(border=True):
             st.markdown("**Results**")
@@ -254,6 +253,15 @@ def _render_results(result_df, source_name):
                 width="stretch",
                 hide_index=True,
                 column_config={
+                    # Without an explicit width a column is "sized to fit the
+                    # cell contents", so the free-text column takes whatever a
+                    # long review needs and pushes Confidence's percentage past
+                    # the grid's right edge (the centered layout caps content at
+                    # 736px at any window size, so widening the browser cannot
+                    # rescue it). Capping the already-truncated preview is the
+                    # cheap side of that trade. Slack redistributes evenly, so
+                    # the table still fills its card.
+                    text_col: st.column_config.TextColumn(width="large"),
                     "Sentiment": st.column_config.TextColumn(
                         "Sentiment",
                         help="Predicted sentiment (blank for empty or missing text).",
@@ -359,4 +367,4 @@ if df is not None:
         # Invalidate when the selected column no longer matches what was run.
         result_df = st.session_state.get("result_df")
         if result_df is not None and st.session_state.get("result_col") == text_column:
-            _render_results(result_df, source_name)
+            _render_results(result_df, source_name, text_column)
