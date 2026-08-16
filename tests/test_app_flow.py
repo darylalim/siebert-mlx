@@ -13,7 +13,7 @@ from pathlib import Path
 import pandas as pd
 from streamlit.testing.v1 import AppTest
 
-from streamlit_app import STYLE_ROW_CAP
+from streamlit_app import CONFIDENCE_COL, SENTIMENT_COL, STYLE_ROW_CAP
 
 # Absolute, because AppTest.from_file resolves a *relative* path against the
 # calling file (this module's tests/ directory) as of streamlit 1.61, where it
@@ -111,6 +111,9 @@ def _classified_state(at):
         }
     )
     at.session_state["result_col"] = "text"
+    # A plain tuple, which works precisely because _render_results unpacks
+    # rather than doing attribute access on a GeneratedColumns.
+    at.session_state["result_generated_cols"] = (SENTIMENT_COL, CONFIDENCE_COL)
     return at
 
 
@@ -126,7 +129,13 @@ def test_reset_clears_classification_results():
     # Reset clears the persisted result, not just df/source_name.
     at = _classified_state(_new_app()).run()
     at.button(key="reset").click().run()
-    for key in ["df", "source_name", "result_df", "result_col"]:
+    for key in [
+        "df",
+        "source_name",
+        "result_df",
+        "result_col",
+        "result_generated_cols",
+    ]:
         assert key not in at.session_state
 
 
@@ -146,6 +155,7 @@ def test_results_hidden_when_selected_column_changes():
         }
     )
     at.session_state["result_col"] = "text"
+    at.session_state["result_generated_cols"] = (SENTIMENT_COL, CONFIDENCE_COL)
     at.run()
     assert any("Classification complete" in s.value for s in at.success)
 
@@ -196,6 +206,7 @@ def test_sample_clears_previous_results():
     assert at.session_state["source_name"] == "mixed_sample"
     assert "result_df" not in at.session_state
     assert "result_col" not in at.session_state
+    assert "result_generated_cols" not in at.session_state
 
 
 def test_malformed_upload_shows_error_and_clears_data():
@@ -236,6 +247,7 @@ def test_result_survives_plain_rerun_after_upload():
         }
     )
     at.session_state["result_col"] = "text"
+    at.session_state["result_generated_cols"] = (SENTIMENT_COL, CONFIDENCE_COL)
 
     at.run()  # plain rerun; uploader still holds the same file
     assert "result_df" in at.session_state
@@ -256,6 +268,7 @@ def test_large_result_skips_styler_without_error():
         }
     )
     at.session_state["result_col"] = "text"
+    at.session_state["result_generated_cols"] = (SENTIMENT_COL, CONFIDENCE_COL)
     at.run()
     assert not at.exception
     assert len(at.metric) == 4
@@ -270,7 +283,66 @@ def test_all_blank_result_shows_info_not_metrics():
         {"text": ["", "  "], "Sentiment": ["", ""], "Confidence": [0.0, 0.0]}
     )
     at.session_state["result_col"] = "text"
+    at.session_state["result_generated_cols"] = (SENTIMENT_COL, CONFIDENCE_COL)
     at.run()
     assert any("No classification was performed" in i.value for i in at.info)
     assert len(at.metric) == 0
     assert not any("Classification complete" in s.value for s in at.success)
+
+
+def test_collision_renames_the_model_column_and_metrics_follow_it():
+    # End-to-end tripwire for the labeled-dataset case: the ground-truth
+    # Sentiment column survives, the notice explains the renamed headers, and
+    # the metrics count the model's column. Reading the literal "Sentiment"
+    # would report "0 (0%)" positives against the ground-truth vocabulary.
+    # Hand-seeded rather than clicking Classify because conftest's mocked model
+    # returns a MagicMock that mx.softmax rejects.
+    at = _new_app()
+    at.session_state["df"] = pd.DataFrame(
+        {"text": ["great", "awful"], "Sentiment": ["POS", "NEG"]}
+    )
+    at.session_state["source_name"] = "labeled"
+    at.session_state["result_df"] = pd.DataFrame(
+        {
+            "text": ["great", "awful"],
+            "Sentiment": ["POS", "NEG"],
+            "Sentiment (model)": ["positive", "negative"],
+            "Confidence": [0.99, 0.97],
+        }
+    )
+    at.session_state["result_col"] = "text"
+    at.session_state["result_generated_cols"] = ("Sentiment (model)", CONFIDENCE_COL)
+    at.run()
+    assert not at.exception
+    assert any("Sentiment (model)" in i.value for i in at.info)
+    assert len(at.metric) == 4
+    assert at.metric[1].value == "1 (50%)"
+    assert at.metric[2].value == "1 (50%)"
+
+
+def test_all_blank_colliding_file_shows_both_notices():
+    # The rename notice sits ABOVE the all-blank split deliberately: this file
+    # classified nothing, but its download still carries the renamed headers,
+    # so the user still needs the explanation. Moving the notice into the else
+    # arm leaves every other test green -- this is the only thing pinning it.
+    at = _new_app()
+    at.session_state["df"] = pd.DataFrame(
+        {"text": ["", "  "], "Sentiment": ["gt", "gt"]}
+    )
+    at.session_state["source_name"] = "labeled_blank"
+    at.session_state["result_df"] = pd.DataFrame(
+        {
+            "text": ["", "  "],
+            "Sentiment": ["gt", "gt"],
+            "Sentiment (model)": ["", ""],
+            "Confidence": [0.0, 0.0],
+        }
+    )
+    at.session_state["result_col"] = "text"
+    at.session_state["result_generated_cols"] = ("Sentiment (model)", CONFIDENCE_COL)
+    at.run()
+    assert not at.exception
+    assert len(at.info) == 2
+    assert any("Sentiment (model)" in i.value for i in at.info)
+    assert any("No classification was performed" in i.value for i in at.info)
+    assert len(at.metric) == 0

@@ -17,6 +17,7 @@ Streamlit application for sentiment classification in English text using [SiEBER
 - Summary metric cards: total rows, positive/negative counts, average confidence
 - Sentiment-distribution chart
 - Styled results table with CSV download
+- Never overwrites your data: a CSV that already has a `Sentiment` or `Confidence` column keeps it, and the model's output is added as `Sentiment (model)` / `Confidence (model)`
 - Results persist across interactions; one-click Reset to start over
 - Streamlit's built-in light and dark themes, switchable from the settings menu
 - Batched MLX inference in float16 on Apple Silicon

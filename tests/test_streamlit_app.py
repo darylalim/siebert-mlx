@@ -7,15 +7,24 @@ import pytest
 
 from streamlit_app import (
     BATCH_SIZE,
+    CONFIDENCE_COL,
     SAMPLE_DATA_PATH,
+    SENTIMENT_COL,
     STYLE_ROW_CAP,
     TEXT_COL_WIDTH,
+    GeneratedColumns,
     _ensure_safetensors,
+    _generated_columns,
     _render_results,
+    _unique_column_name,
     detect_text_column,
     load_model,
     process_dataframe,
 )
+
+# Module-level, not an inline default: GeneratedColumns(...) in a signature is a
+# call in a default argument and trips ruff B008.
+PLAIN_COLS = GeneratedColumns(SENTIMENT_COL, CONFIDENCE_COL)
 
 # --- BATCH_SIZE ---
 
@@ -59,6 +68,67 @@ class TestDetectTextColumn:
 
     def test_returns_none_for_empty_dataframe(self):
         assert detect_text_column(pd.DataFrame()) is None
+
+
+# --- generated column names ---
+
+
+class TestUniqueColumnName:
+    def test_returns_the_base_when_free(self):
+        assert _unique_column_name("Sentiment", {"text"}) == "Sentiment"
+
+    def test_suffixes_once_then_counts_up(self):
+        taken = {"Sentiment"}
+        assert _unique_column_name("Sentiment", taken) == "Sentiment (model)"
+        taken.add("Sentiment (model)")
+        assert _unique_column_name("Sentiment", taken) == "Sentiment (model) 2"
+        taken.add("Sentiment (model) 2")
+        assert _unique_column_name("Sentiment", taken) == "Sentiment (model) 3"
+
+
+class TestGeneratedColumns:
+    def test_uses_the_plain_names_when_free(self):
+        assert _generated_columns(pd.DataFrame({"text": ["a"]})) == PLAIN_COLS
+
+    def test_renames_the_model_column_not_the_source_column(self):
+        cols = _generated_columns(pd.DataFrame({"text": ["a"], "Sentiment": ["neg"]}))
+        assert cols == ("Sentiment (model)", CONFIDENCE_COL)
+
+    def test_renames_only_the_colliding_name(self):
+        cols = _generated_columns(pd.DataFrame({"text": ["a"], "Confidence": [1]}))
+        assert cols == (SENTIMENT_COL, "Confidence (model)")
+
+    def test_renames_both_when_both_collide(self):
+        cols = _generated_columns(
+            pd.DataFrame({"Sentiment": ["a"], "Confidence": [1], "text": ["b"]})
+        )
+        assert cols == ("Sentiment (model)", "Confidence (model)")
+
+    def test_counts_up_past_a_second_collision(self):
+        # A downloaded result that is re-uploaded already carries
+        # "Sentiment (model)"; neither it nor the original may be displaced.
+        cols = _generated_columns(
+            pd.DataFrame({"Sentiment": ["a"], "Sentiment (model)": ["b"]})
+        )
+        assert cols.sentiment == "Sentiment (model) 2"
+
+    def test_resolves_on_a_zero_row_frame(self):
+        # df.columns is non-empty while len(df) is 0; the loop must not care.
+        assert _generated_columns(pd.DataFrame({"text": []})) == PLAIN_COLS
+
+    def test_handles_non_string_column_labels(self):
+        # df.columns need not hold strings; membership must not raise.
+        assert _generated_columns(pd.DataFrame({1: [], 2.5: []})) == PLAIN_COLS
+
+    def test_is_pure(self):
+        # The UI persists what process_dataframe returned rather than
+        # recomputing, but purity is what makes the two agree by construction.
+        df = pd.DataFrame({"text": ["a"], "Sentiment": ["neg"]})
+        assert _generated_columns(df) == _generated_columns(df)
+
+    def test_exposes_named_fields(self):
+        cols = _generated_columns(pd.DataFrame({"text": ["a"]}))
+        assert (cols.sentiment, cols.confidence) == (SENTIMENT_COL, CONFIDENCE_COL)
 
 
 # --- load_model ---
@@ -296,7 +366,7 @@ class TestProcessDataframe:
 
     def test_adds_sentiment_column(self):
         df = pd.DataFrame({"text": ["good product", "bad product"]})
-        result = process_dataframe(
+        result, _ = process_dataframe(
             df,
             "text",
             _make_mock_model(["positive", "negative"]),
@@ -307,7 +377,7 @@ class TestProcessDataframe:
 
     def test_classifies_positive(self):
         df = pd.DataFrame({"text": ["great"]})
-        result = process_dataframe(
+        result, _ = process_dataframe(
             df,
             "text",
             _make_mock_model(["positive"]),
@@ -317,7 +387,7 @@ class TestProcessDataframe:
 
     def test_classifies_negative(self):
         df = pd.DataFrame({"text": ["terrible"]})
-        result = process_dataframe(
+        result, _ = process_dataframe(
             df,
             "text",
             _make_mock_model(["negative"]),
@@ -327,7 +397,7 @@ class TestProcessDataframe:
 
     def test_maps_labels_to_lowercase(self):
         df = pd.DataFrame({"text": ["great", "awful"]})
-        result = process_dataframe(
+        result, _ = process_dataframe(
             df,
             "text",
             _make_mock_model(["positive", "negative"]),
@@ -349,7 +419,7 @@ class TestProcessDataframe:
         batch2_output.logits = mx.array([[0.0, 1.0]] * 3)
         model.side_effect = [batch1_output, batch2_output]
 
-        result = process_dataframe(df, "text", model, _make_mock_tokenizer())
+        result, _ = process_dataframe(df, "text", model, _make_mock_tokenizer())
 
         assert len(result) == n
         assert model.call_count == 2
@@ -391,7 +461,7 @@ class TestProcessDataframe:
 
     def test_does_not_mutate_input_dataframe(self):
         df = pd.DataFrame({"text": ["review"]})
-        result = process_dataframe(
+        result, _ = process_dataframe(
             df,
             "text",
             _make_mock_model(["positive"]),
@@ -400,12 +470,97 @@ class TestProcessDataframe:
         assert "Sentiment" not in df.columns
         assert "Sentiment" in result.columns
 
+    def test_preserves_a_source_sentiment_column(self):
+        # THE regression: result["Sentiment"] = sentiments used to replace a
+        # labeled dataset's ground truth in the results table AND in the
+        # downloaded CSV. pandas accepts the assignment silently, so this was
+        # data loss with no error to catch.
+        df = pd.DataFrame({"text": ["great"], "Sentiment": ["ground truth"]})
+        result, cols = process_dataframe(
+            df,
+            "text",
+            _make_mock_model(["positive"]),
+            _make_mock_tokenizer(),
+        )
+        assert cols == ("Sentiment (model)", CONFIDENCE_COL)
+        assert result["Sentiment"].iloc[0] == "ground truth"
+        assert result["Sentiment (model)"].iloc[0] == "positive"
+        assert df.columns.tolist() == ["text", "Sentiment"]
+
+    def test_preserves_a_source_confidence_column(self):
+        df = pd.DataFrame({"text": ["great"], "Confidence": ["mine"]})
+        result, cols = process_dataframe(
+            df,
+            "text",
+            _make_mock_model(["positive"]),
+            _make_mock_tokenizer(),
+        )
+        assert cols == (SENTIMENT_COL, "Confidence (model)")
+        assert result["Confidence"].iloc[0] == "mine"
+        assert 0.0 <= result["Confidence (model)"].iloc[0] <= 1.0
+
+    def test_preserves_both_source_columns(self):
+        df = pd.DataFrame(
+            {"text": ["great"], "Sentiment": ["gt"], "Confidence": ["mine"]}
+        )
+        result, cols = process_dataframe(
+            df,
+            "text",
+            _make_mock_model(["positive"]),
+            _make_mock_tokenizer(),
+        )
+        assert cols == ("Sentiment (model)", "Confidence (model)")
+        assert result["Sentiment"].iloc[0] == "gt"
+        assert result["Confidence"].iloc[0] == "mine"
+
+    def test_classifies_a_column_named_sentiment(self):
+        # The text column IS the colliding one: its own text must survive.
+        # `texts` is read at the top of the function, long before the write.
+        df = pd.DataFrame({"Sentiment": ["great product"]})
+        result, cols = process_dataframe(
+            df,
+            "Sentiment",
+            _make_mock_model(["positive"]),
+            _make_mock_tokenizer(),
+        )
+        assert result["Sentiment"].iloc[0] == "great product"
+        assert result[cols.sentiment].iloc[0] == "positive"
+
+    def test_appends_in_order_without_a_collision(self):
+        df = pd.DataFrame({"text": ["great"]})
+        result, _ = process_dataframe(
+            df, "text", _make_mock_model(["positive"]), _make_mock_tokenizer()
+        )
+        assert result.columns.tolist() == ["text", "Sentiment", "Confidence"]
+
+    def test_round_trip_keeps_every_earlier_run(self):
+        # Re-classifying a downloaded result must append, never displace: each
+        # run's columns keep the names they were given.
+        df = pd.DataFrame({"text": ["great"]})
+        first, first_cols = process_dataframe(
+            df, "text", _make_mock_model(["positive"]), _make_mock_tokenizer()
+        )
+        second, second_cols = process_dataframe(
+            first, "text", _make_mock_model(["negative"]), _make_mock_tokenizer()
+        )
+        assert first_cols == PLAIN_COLS
+        assert second_cols == ("Sentiment (model)", "Confidence (model)")
+        assert second["Sentiment"].iloc[0] == "positive"
+        assert second["Sentiment (model)"].iloc[0] == "negative"
+        assert second.columns.tolist() == [
+            "text",
+            "Sentiment",
+            "Confidence",
+            "Sentiment (model)",
+            "Confidence (model)",
+        ]
+
     def test_skips_missing_text_cells(self):
         # Regression: pandas 3.0 keeps a missing cell as float NaN after
         # astype(str), so a blank cell must be coerced and skipped (sentiment
         # "", confidence 0.0) rather than crashing on NaN.strip().
         df = pd.DataFrame({"text": ["good", None, "bad"]})
-        result = process_dataframe(
+        result, _ = process_dataframe(
             df,
             "text",
             _make_mock_model(["positive", "negative"]),
@@ -426,7 +581,7 @@ class TestProcessDataframe:
 
         blank_ids = [3, 4, 8]  # 3 & 8 missing (NaN), 4 whitespace-only
         valid_count = len(df) - len(blank_ids)
-        result = process_dataframe(
+        result, _ = process_dataframe(
             df,
             "text",
             _make_mock_model(["positive"] * valid_count),
@@ -444,8 +599,10 @@ class TestProcessDataframe:
     def test_handles_empty_dataframe(self):
         df = pd.DataFrame({"text": []})
         model = MagicMock()
-        result = process_dataframe(df, "text", model, MagicMock())
+        result, cols = process_dataframe(df, "text", model, MagicMock())
 
+        # Pins the zero-row / one-column edge the naming loop must survive.
+        assert cols == PLAIN_COLS
         assert "Sentiment" in result.columns
         assert "Confidence" in result.columns
         assert len(result) == 0
@@ -474,12 +631,12 @@ class TestProcessDataframe:
         mock_output.logits = mx.array([[0.0, 1.0]])
         model.return_value = mock_output
 
-        result = process_dataframe(df, "text", model, _make_mock_tokenizer())
+        result, _ = process_dataframe(df, "text", model, _make_mock_tokenizer())
         assert result["Sentiment"].iloc[0] == "positive"
 
     def test_adds_confidence_column(self):
         df = pd.DataFrame({"text": ["good product", "bad product"]})
-        result = process_dataframe(
+        result, _ = process_dataframe(
             df,
             "text",
             _make_mock_model(["positive", "negative"]),
@@ -493,7 +650,7 @@ class TestProcessDataframe:
     def test_handles_all_blank_texts(self):
         df = pd.DataFrame({"text": ["", "  ", "\t"]})
         model = MagicMock()
-        result = process_dataframe(df, "text", model, MagicMock())
+        result, _ = process_dataframe(df, "text", model, MagicMock())
 
         assert len(result) == 3
         assert all(s == "" for s in result["Sentiment"])
@@ -504,7 +661,7 @@ class TestProcessDataframe:
 
     def test_handles_mixed_blank_text(self):
         df = pd.DataFrame({"text": ["good product", "", "  ", "bad product"]})
-        result = process_dataframe(
+        result, _ = process_dataframe(
             df,
             "text",
             _make_mock_model(["positive", "negative"]),
@@ -519,7 +676,7 @@ class TestProcessDataframe:
 
     def test_confidence_values_in_valid_range(self):
         df = pd.DataFrame({"text": [f"text {i}" for i in range(5)]})
-        result = process_dataframe(
+        result, _ = process_dataframe(
             df,
             "text",
             _make_mock_model(
@@ -549,8 +706,8 @@ class TestRenderResultsColumnConfig:
             self.mock_st = mock_st
             yield
 
-    def _config_for(self, df):
-        _render_results(df, "sample")
+    def _config_for(self, df, generated_cols=PLAIN_COLS):
+        _render_results(df, "sample", generated_cols)
         return self.mock_st.dataframe.call_args.kwargs["column_config"]
 
     def test_caps_the_free_text_column(self):
@@ -582,12 +739,188 @@ class TestRenderResultsColumnConfig:
         assert "text" in config
         assert "id" not in config
 
-    def test_generated_columns_survive_a_name_collision(self):
-        # process_dataframe overwrites a source column named Sentiment, so by
-        # here only the generated one exists; it must keep its own config
-        # rather than being handed a width entry.
+    def test_generated_columns_are_not_width_capped(self):
+        # The generated pair keeps its own config rather than being handed a
+        # width entry, even though Sentiment is text dtype.
         config = self._config_for(
             pd.DataFrame({"Sentiment": ["positive"], "Confidence": [0.99]})
         )
         assert set(config) == {"Sentiment", "Confidence"}
+        # assert_called_once_with, not assert_called_once: both entries omit
+        # the positional label so the header self-syncs with the frame, and
+        # only pinning the full kwargs makes a re-added literal label fail.
+        self.mock_st.column_config.TextColumn.assert_called_once_with(
+            help="Predicted sentiment (blank for empty or missing text)."
+        )
+        self.mock_st.column_config.ProgressColumn.assert_called_once_with(
+            help="Model confidence in the predicted sentiment.",
+            format="percent",
+            min_value=0.0,
+            max_value=1.0,
+        )
+
+    def test_caps_the_preserved_source_column_not_the_generated_one(self):
+        # Under a collision the roles invert: the user's free-text Sentiment
+        # column is what needs the cap, and the model's renamed column keeps
+        # its own config. A leftover literal exclusion tuple fails the
+        # `set(config)` assertion (measured: "Sentiment" drops out while
+        # "Sentiment (model)" wrongly gains a width entry). The call_count
+        # stays 3 through that mutation, so it is corroboration, not the
+        # tripwire.
+        config = self._config_for(
+            pd.DataFrame(
+                {
+                    "text": ["good"],
+                    "Sentiment": ["ground truth"],
+                    "Sentiment (model)": ["positive"],
+                    "Confidence": [0.99],
+                }
+            ),
+            GeneratedColumns("Sentiment (model)", "Confidence"),
+        )
+        assert set(config) == {"text", "Sentiment", "Sentiment (model)", "Confidence"}
+        assert self.mock_st.column_config.TextColumn.call_count == 3
         self.mock_st.column_config.ProgressColumn.assert_called_once()
+
+    def test_keys_both_generated_columns_when_both_are_renamed(self):
+        # The only case that pins `column_config[confidence_col]`: with the
+        # confidence name left plain, a mutant keyed to the literal
+        # "Confidence" lands on the same key and nothing fails.
+        config = self._config_for(
+            pd.DataFrame(
+                {
+                    "text": ["good"],
+                    "Sentiment": ["ground truth"],
+                    "Confidence": ["mine"],
+                    "Sentiment (model)": ["positive"],
+                    "Confidence (model)": [0.99],
+                }
+            ),
+            GeneratedColumns("Sentiment (model)", "Confidence (model)"),
+        )
+        assert set(config) == {
+            "text",
+            "Sentiment",
+            "Confidence",
+            "Sentiment (model)",
+            "Confidence (model)",
+        }
+
+
+# --- _render_results generated-column reads ---
+
+
+class TestRenderResultsGeneratedColumns:
+    """Pins that every generated-column read follows the resolved names.
+
+    Under a collision the source column and the model's column hold the same
+    kind of values, so a leftover literal binds the metrics, the tint and the
+    all-blank guard to the user's data: silently wrong numbers rather than a
+    visible error.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _mock_st(self):
+        with patch("streamlit_app.st") as mock_st:
+            self.mock_st = mock_st
+            yield
+
+    def test_metrics_read_the_generated_columns(self):
+        # Reading the literal "Sentiment" would count the ground-truth
+        # vocabulary (0 positive, 0 negative); reading the literal "Confidence"
+        # would call .mean() on a text column and blow up the whole render.
+        #
+        # The source column is deliberately *blank in a row the model
+        # classified*: that makes the `classified = result_df[... != ""]` row
+        # filter load-bearing too, not just the three counters below it. With
+        # matching blankness the mutant filter selects the same rows and this
+        # test passes either way -- measured, so do not "simplify" the fixture.
+        _render_results(
+            pd.DataFrame(
+                {
+                    "Sentiment": ["", "POSITIVE"],
+                    "Confidence": ["n/a", "n/a"],
+                    "Sentiment (model)": ["positive", "negative"],
+                    "Confidence (model)": [0.9, 0.7],
+                }
+            ),
+            "sample",
+            GeneratedColumns("Sentiment (model)", "Confidence (model)"),
+        )
+        values = [call.args[1] for call in self.mock_st.metric.call_args_list]
+        assert values == [2, "1 (50%)", "1 (50%)", "80.0%"]
+
+    def test_tints_the_generated_column(self):
+        _render_results(
+            pd.DataFrame(
+                {
+                    "Sentiment": ["gt", "gt"],
+                    "Sentiment (model)": ["positive", "negative"],
+                    "Confidence": [0.99, 0.97],
+                }
+            ),
+            "sample",
+            GeneratedColumns("Sentiment (model)", "Confidence"),
+        )
+        html = self.mock_st.dataframe.call_args.args[0].to_html()
+        assert "rgba(33, 195, 84, 0.12)" in html
+
+    def test_does_not_tint_a_source_lookalike_column(self):
+        # Only the *source* column carries tintable values here, so any tint at
+        # all means the Styler subset is bound to the user's ground truth.
+        # Asserted on the tint values we pass rather than on generated cell
+        # ids, which would churn with pandas' HTML.
+        _render_results(
+            pd.DataFrame(
+                {
+                    "Sentiment": ["positive", "negative"],
+                    "Sentiment (model)": ["mixed", "mixed"],
+                    "Confidence": [0.99, 0.97],
+                }
+            ),
+            "sample",
+            GeneratedColumns("Sentiment (model)", "Confidence"),
+        )
+        html = self.mock_st.dataframe.call_args.args[0].to_html()
+        assert "background-color" not in html
+
+    def test_all_blank_guard_reads_the_generated_column(self):
+        # Ground-truth labels are non-blank while the model classified nothing;
+        # reading the source column would show metrics over an empty result.
+        _render_results(
+            pd.DataFrame(
+                {
+                    "Sentiment": ["gt", "gt"],
+                    "Sentiment (model)": ["", ""],
+                    "Confidence": [0.0, 0.0],
+                }
+            ),
+            "sample",
+            GeneratedColumns("Sentiment (model)", "Confidence"),
+        )
+        self.mock_st.metric.assert_not_called()
+
+    def test_notice_names_both_renamed_columns(self):
+        _render_results(
+            pd.DataFrame(
+                {
+                    "Sentiment": ["gt"],
+                    "Confidence": ["mine"],
+                    "Sentiment (model)": ["positive"],
+                    "Confidence (model)": [0.99],
+                }
+            ),
+            "sample",
+            GeneratedColumns("Sentiment (model)", "Confidence (model)"),
+        )
+        message = self.mock_st.info.call_args.args[0]
+        assert "Sentiment (model)" in message
+        assert "Confidence (model)" in message
+
+    def test_no_notice_without_a_collision(self):
+        _render_results(
+            pd.DataFrame({"Sentiment": ["positive"], "Confidence": [0.99]}),
+            "sample",
+            PLAIN_COLS,
+        )
+        self.mock_st.info.assert_not_called()

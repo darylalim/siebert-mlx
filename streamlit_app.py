@@ -1,7 +1,8 @@
 import os
 import tempfile
+from collections.abc import Container
 from pathlib import Path
-from typing import cast
+from typing import NamedTuple, cast
 
 # mlx 0.32.0 ships no .pyi stubs for its compiled `core` extension (0.31.2 did),
 # and ty cannot resolve a binary module without one. Remove the suppression once
@@ -22,6 +23,11 @@ load_dotenv()
 
 BATCH_SIZE = 8
 STYLE_ROW_CAP = 2000
+# Preferred names for the two generated columns. Constants rather than inline
+# literals so the collision rule, the rename notice and the tests agree on what
+# "uncollided" means.
+SENTIMENT_COL = "Sentiment"
+CONFIDENCE_COL = "Confidence"
 # Pixel cap for free-text columns in the results table. Sized against the
 # centered layout's 736px content cap: the two generated columns plus a narrow
 # id take ~278px, so 300 leaves real headroom instead of the zero slack that
@@ -103,8 +109,63 @@ def load_model():
     return model, tokenizer
 
 
+class GeneratedColumns(NamedTuple):
+    """Names of the two columns `process_dataframe` appends to its result."""
+
+    sentiment: str
+    confidence: str
+
+
+def _unique_column_name(base: str, taken: Container[object]) -> str:
+    """`base`, or `base (model)` / `base (model) N` when `base` is taken."""
+    if base not in taken:
+        return base
+    # "(model)" rather than a bare "_1": the header is the only explanation of
+    # the rename that travels with the downloaded CSV, and "_1" reads as a
+    # duplicate of the user's column rather than as the model's output. Bare
+    # "(model)" first and only then a counter, because a single collision is
+    # the case that actually happens and it should read as a name.
+    candidate = f"{base} (model)"
+    n = 2
+    while candidate in taken:
+        candidate = f"{base} (model) {n}"
+        n += 1
+    return candidate
+
+
+def _generated_columns(df: pd.DataFrame) -> GeneratedColumns:
+    """The one definition of what `process_dataframe`'s two new columns are called.
+
+    ("Sentiment", "Confidence") unless the source frame already uses those
+    names, in which case the *model's* column is renamed and the user's keeps
+    its name, its data and its position. That direction is the whole fix: the
+    result is the input frame **plus** two columns, never minus or renamed, so
+    a script reading `Sentiment` out of the download still gets the file's own
+    data instead of silently getting predictions.
+
+    Resolved against the *input* frame, never the half-built result. `df.columns`
+    need not hold strings, so membership is all that is asked of `taken`.
+    """
+    taken: set[object] = set(df.columns)
+    sentiment = _unique_column_name(SENTIMENT_COL, taken)
+    # `| {sentiment}` is belt-and-braces, not load-bearing: every name this
+    # returns is prefixed by its own base, and the two bases differ, so the
+    # pair can never collide with each other (confirmed exhaustively over all
+    # 256 subsets of the plausible name space -- the guard changed the answer
+    # zero times). Kept so a third generated column could not reintroduce the
+    # problem, but do not mistake it for the thing keeping them distinct.
+    confidence = _unique_column_name(CONFIDENCE_COL, taken | {sentiment})
+    return GeneratedColumns(sentiment, confidence)
+
+
 def process_dataframe(df, text_column, model, tokenizer):
-    """Classify texts in batches; returns a copy with Sentiment and Confidence columns."""
+    """Classify texts in batches; returns (result copy, names of its two new columns).
+
+    The result is the input frame plus two columns, named by
+    `_generated_columns`: "Sentiment"/"Confidence" unless the source frame
+    already uses those names. Callers must render and persist the returned
+    names rather than assuming the literals.
+    """
     texts = df[text_column].fillna("").astype(str).tolist()
     sentiments = [""] * len(texts)
     confidences = [0.0] * len(texts)
@@ -148,9 +209,14 @@ def process_dataframe(df, text_column, model, tokenizer):
 
     progress_bar.empty()
     result = df.copy()
-    result["Sentiment"] = sentiments
-    result["Confidence"] = confidences
-    return result
+    # Never assign the literal names: a labeled CSV that already carries a
+    # ground-truth Sentiment column would have it silently replaced, on screen
+    # and in the downloaded file. Resolved against `df` -- the source, before
+    # the generated columns exist -- so both writes are strictly additive.
+    cols = _generated_columns(df)
+    result[cols.sentiment] = sentiments
+    result[cols.confidence] = confidences
+    return result, cols
 
 
 st.set_page_config(page_title="SiEBERT MLX", page_icon=":material/sentiment_satisfied:")
@@ -164,8 +230,13 @@ st.session_state.setdefault("uploader_key", 0)
 
 
 def _clear_results():
+    # All three keys are written together by the classify branch and must die
+    # together: result_generated_cols names columns *inside* result_df, so a
+    # survivor would be applied to the next file's results, tinting and sizing
+    # a column that is not the model's output.
     st.session_state.pop("result_df", None)
     st.session_state.pop("result_col", None)
+    st.session_state.pop("result_generated_cols", None)
 
 
 def _reset_uploader():
@@ -188,8 +259,32 @@ def _reset():
     _clear_results()
 
 
-def _render_results(result_df, source_name):
-    if result_df["Sentiment"].eq("").all():
+def _render_results(result_df, source_name, generated_cols):
+    # Unpacked once rather than read as generated_cols.sentiment at each of the
+    # nine sites below: the lookups then read as plain column names, a near
+    # literal swap of the hardcoded strings they replace, and any (sentiment,
+    # confidence) 2-tuple works, which is what lets the flow tests hand-seed a
+    # plain tuple. No default value -- a default would silently reinstate the
+    # literals on exactly the input this parameter exists for.
+    sentiment_col, confidence_col = generated_cols
+
+    # Say so when the source CSV forced a rename. Here rather than in
+    # process_dataframe because results re-render from session_state on every
+    # rerun: a notice emitted during classify would vanish on the first one,
+    # including the rerun the Download click itself causes -- precisely when
+    # the user needs to know what the file's headers mean. Above the all-blank
+    # split so it shows on that branch too, whose download carries the same
+    # headers. st.info, not st.warning: nothing failed and no data was lost.
+    if (sentiment_col, confidence_col) != (SENTIMENT_COL, CONFIDENCE_COL):
+        st.info(
+            f"This file already has a column named {SENTIMENT_COL} or "
+            f"{CONFIDENCE_COL}, so the results were added as **{sentiment_col}** "
+            f"and **{confidence_col}**. Your own columns are unchanged, on "
+            "screen and in the download.",
+            icon=":material/info:",
+        )
+
+    if result_df[sentiment_col].eq("").all():
         st.info(
             "All values in this column are empty. No classification was performed.",
             icon=":material/info:",
@@ -201,10 +296,10 @@ def _render_results(result_df, source_name):
         # here. A horizontal container (not st.columns) lets the metric cards
         # wrap on narrow screens, per Streamlit dashboard guidance.
         total = len(result_df)
-        classified = result_df[result_df["Sentiment"] != ""]
-        pos_count = int((classified["Sentiment"] == "positive").sum())
-        neg_count = int((classified["Sentiment"] == "negative").sum())
-        avg_conf = classified["Confidence"].mean() if len(classified) else 0.0
+        classified = result_df[result_df[sentiment_col] != ""]
+        pos_count = int((classified[sentiment_col] == "positive").sum())
+        neg_count = int((classified[sentiment_col] == "negative").sum())
+        avg_conf = classified[confidence_col].mean() if len(classified) else 0.0
 
         with st.container(horizontal=True):
             st.metric("Total rows", total, border=True)
@@ -222,6 +317,10 @@ def _render_results(result_df, source_name):
 
         with st.container(border=True):
             st.markdown("**Sentiment distribution**")
+            # These two "Sentiment" strings key a locally built two-row chart
+            # frame, never the user's CSV: they cannot collide, must stay
+            # matched to the x= binding below, and must NOT be swept into a
+            # rename of the resolved lookups above.
             dist_df = pd.DataFrame(
                 {
                     "Sentiment": ["positive", "negative"],
@@ -249,7 +348,7 @@ def _render_results(result_df, source_name):
             display_df = result_df
             if len(result_df) <= STYLE_ROW_CAP:
                 display_df = result_df.style.map(
-                    lambda v: sentiment_tint.get(v, ""), subset=["Sentiment"]
+                    lambda v: sentiment_tint.get(v, ""), subset=[sentiment_col]
                 )
             # Without an explicit width a column is "sized to fit the cell
             # contents", so one long review takes the row and pushes
@@ -259,21 +358,25 @@ def _render_results(result_df, source_name):
             # the classified one: a second text column blows the same budget.
             # Numeric columns stay auto-sized because they are already narrow,
             # and padding an `id` out to TEXT_COL_WIDTH would spend the very
-            # budget this cap exists to protect. Assigning the two generated
-            # keys afterwards makes this collision-proof — a CSV column already
-            # named Sentiment or Confidence cannot silently drop its width.
+            # budget this cap exists to protect. The exclusion holds the
+            # *resolved* names, which is what makes it collision-proof now: a
+            # source column named Sentiment is a free-text source column like
+            # any other and correctly gets the cap, while the model's renamed
+            # column keeps the config assigned just below.
             column_config = {
                 col: st.column_config.TextColumn(width=TEXT_COL_WIDTH)
                 for col in result_df.columns
-                if col not in ("Sentiment", "Confidence")
+                if col not in (sentiment_col, confidence_col)
                 and _is_text_dtype(result_df[col])
             }
-            column_config["Sentiment"] = st.column_config.TextColumn(
-                "Sentiment",
+            # Both entries drop the positional label: st.column_config documents
+            # label=None as "the column name is used", so the header self-syncs
+            # with the frame and a renamed "Sentiment (model)" can never
+            # disagree with the downloaded CSV.
+            column_config[sentiment_col] = st.column_config.TextColumn(
                 help="Predicted sentiment (blank for empty or missing text).",
             )
-            column_config["Confidence"] = st.column_config.ProgressColumn(
-                "Confidence",
+            column_config[confidence_col] = st.column_config.ProgressColumn(
                 help="Model confidence in the predicted sentiment.",
                 format="percent",
                 min_value=0.0,
@@ -367,14 +470,31 @@ if df is not None:
 
         if classify_clicked:
             with st.spinner("Classifying..."):
-                st.session_state["result_df"] = process_dataframe(
+                # Bound as classified_df so it does not shadow the result_df
+                # read back from session_state a few lines below.
+                classified_df, generated_cols = process_dataframe(
                     df, text_column, model, tokenizer
                 )
+                st.session_state["result_df"] = classified_df
                 st.session_state["result_col"] = text_column
+                # Stored, not recomputed at render time. Recovering the pair
+                # from result_df by *name* is undecidable (a source frame
+                # carrying both Sentiment and "Sentiment (model)" is
+                # indistinguishable from a renamed one), and recovering it
+                # *positionally* would encode an append-order contract that
+                # nothing enforces.
+                st.session_state["result_generated_cols"] = generated_cols
 
         # Render persisted results so post-classify reruns (e.g. the Download
         # click or a theme toggle) don't collapse the view or re-run inference.
         # Invalidate when the selected column no longer matches what was run.
         result_df = st.session_state.get("result_df")
         if result_df is not None and st.session_state.get("result_col") == text_column:
-            _render_results(result_df, source_name)
+            # Indexed, not .get() with a default: the three result_* keys are
+            # written in this one branch and popped together by _clear_results,
+            # so a missing pair means broken state -- and a default of the plain
+            # names would silently tint, size and count the user's own Sentiment
+            # column on exactly the input this indirection exists for.
+            _render_results(
+                result_df, source_name, st.session_state["result_generated_cols"]
+            )

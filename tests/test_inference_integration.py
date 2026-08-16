@@ -94,7 +94,10 @@ def test_pinned_confidences_and_labels(real_model):
     model, tokenizer = real_model
 
     df = pd.DataFrame({"text": [text for text, _, _ in PINNED]})
-    result = process_dataframe(df, "text", model, tokenizer)
+    result, cols = process_dataframe(df, "text", model, tokenizer)
+
+    # No collision in this frame, so the plain names stay pinned.
+    assert cols == ("Sentiment", "Confidence")
 
     for (text, label, confidence), (_, row) in zip(
         PINNED, result.iterrows(), strict=True
@@ -120,7 +123,7 @@ def test_results_are_stable_across_batch_boundaries(real_model):
     rows = [PINNED[index % len(PINNED)] for index in range(len(PINNED) * repeats)]
     assert len(rows) > BATCH_SIZE, "must span more than one batch to be meaningful"
 
-    result = process_dataframe(
+    result, _ = process_dataframe(
         pd.DataFrame({"text": [text for text, _, _ in rows]}),
         "text",
         model,
