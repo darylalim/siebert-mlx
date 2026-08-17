@@ -1,6 +1,6 @@
 import os
 import tempfile
-from collections.abc import Container
+from collections.abc import Collection
 from pathlib import Path
 from typing import NamedTuple, cast
 
@@ -135,19 +135,47 @@ class GeneratedColumns(NamedTuple):
     confidence: str
 
 
-def _unique_column_name(base: str, taken: Container[object]) -> str:
-    """`base`, or `base (model)` / `base (model) N` when `base` is taken."""
-    if base not in taken:
+def _model_namespace(base: str) -> str:
+    """The prefix this app reserves for `base`'s generated column."""
+    return f"{base} (model)"
+
+
+def _namespace_members(columns: Collection[object], base: str) -> list[str]:
+    """Source columns already occupying `base`'s reserved name space.
+
+    Both `base` itself and anything under the `(model)` prefix. Non-string
+    labels are legal in a DataFrame and can only ever match `base` exactly.
+    """
+    prefix = _model_namespace(base)
+    return [
+        str(col)
+        for col in columns
+        if col == base or (isinstance(col, str) and col.startswith(prefix))
+    ]
+
+
+def _unique_column_name(base: str, taken: Collection[object]) -> str:
+    """`base`, or `base (model)` / `base (model) N` when the name space is spoken for.
+
+    "Spoken for" is the whole `(model)` name space, not just `base` itself. A
+    source column already called `Sentiment (model)` holds the user's data under
+    the header this app uses to mean "the model's output", so handing the
+    prediction a bare `Sentiment` would invert that convention -- and silently,
+    because `Sentiment` was free, so nothing would register as a collision and
+    no notice would fire. Reachable from a downloaded result whose ground-truth
+    column was dropped before re-uploading.
+    """
+    if not _namespace_members(taken, base):
         return base
     # "(model)" rather than a bare "_1": the header is the only explanation of
     # the rename that travels with the downloaded CSV, and "_1" reads as a
     # duplicate of the user's column rather than as the model's output. Bare
     # "(model)" first and only then a counter, because a single collision is
     # the case that actually happens and it should read as a name.
-    candidate = f"{base} (model)"
+    candidate = _model_namespace(base)
     n = 2
     while candidate in taken:
-        candidate = f"{base} (model) {n}"
+        candidate = f"{_model_namespace(base)} {n}"
         n += 1
     return candidate
 
@@ -162,8 +190,9 @@ def _generated_columns(df: pd.DataFrame) -> GeneratedColumns:
     a script reading `Sentiment` out of the download still gets the file's own
     data instead of silently getting predictions.
 
-    Resolved against the *input* frame, never the half-built result. `df.columns`
-    need not hold strings, so membership is all that is asked of `taken`.
+    Resolved against the *input* frame, never the half-built result. `taken` is
+    iterated rather than only probed, because "is this name free?" is a question
+    about the whole `(model)` name space and not just one string.
     """
     taken: set[object] = set(df.columns)
     sentiment = _unique_column_name(SENTIMENT_COL, taken)
@@ -309,8 +338,21 @@ def _render_results(result_df, source_name, generated_cols):
         if resolved != base
     ]
     if renamed:
-        noun = "a column" if len(renamed) == 1 else "columns"
-        taken = " and ".join(base for base, _ in renamed)
+        # Name the user's columns that actually stood in the way, read off
+        # result_df, rather than the base constants. They coincide in the common
+        # case, but a file carrying only `Sentiment (model)` renames without
+        # holding any column called `Sentiment` -- naming the constant there
+        # would point at a column that is not in the file at all. Never empty
+        # when `renamed` is: a rename means the name space was occupied, and
+        # result_df is the source frame plus the generated columns.
+        blocking = [
+            col
+            for base, resolved in renamed
+            for col in _namespace_members(result_df.columns, base)
+            if col != resolved
+        ]
+        noun = "a column" if len(blocking) == 1 else "columns"
+        taken = " and ".join(blocking)
         added = " and ".join(f"**{resolved}**" for _, resolved in renamed)
         st.info(
             f"This file already has {noun} named {taken}, so the model's "

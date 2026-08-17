@@ -138,6 +138,31 @@ class TestUniqueColumnName:
         taken.add("Sentiment (model) 2")
         assert _unique_column_name("Sentiment", taken) == "Sentiment (model) 3"
 
+    def test_reserves_the_whole_model_namespace(self):
+        # The base being free is not enough. A source column already called
+        # "Sentiment (model)" holds the user's data under the header this app
+        # uses for the model's output, so returning a bare "Sentiment" for the
+        # prediction would invert the convention -- silently, since nothing
+        # would register as a collision.
+        assert (
+            _unique_column_name("Sentiment", {"text", "Sentiment (model)"})
+            == "Sentiment (model) 2"
+        )
+
+    def test_reserves_the_namespace_from_a_counted_member_alone(self):
+        # The same rule one level deeper: "Sentiment (model) 2" without either
+        # of the names below it still occupies the space. The bare "(model)"
+        # slot is free, so that is what the prediction gets -- both columns end
+        # up suffixed, which is odd but never mistakable for the user's data.
+        assert (
+            _unique_column_name("Sentiment", {"text", "Sentiment (model) 2"})
+            == "Sentiment (model)"
+        )
+
+    def test_ignores_an_unrelated_base(self):
+        # Confidence's name space must not be disturbed by Sentiment's.
+        assert _unique_column_name("Confidence", {"Sentiment (model)"}) == "Confidence"
+
 
 class TestGeneratedColumns:
     def test_uses_the_plain_names_when_free(self):
@@ -164,6 +189,25 @@ class TestGeneratedColumns:
             pd.DataFrame({"Sentiment": ["a"], "Sentiment (model)": ["b"]})
         )
         assert cols.sentiment == "Sentiment (model) 2"
+
+    def test_renames_when_only_the_suffixed_name_is_present(self):
+        # The download -> drop the ground-truth column -> re-upload path. The
+        # plain name is free, so the pre-namespace rule wrote predictions to
+        # "Sentiment" while the user's data sat under "Sentiment (model)" --
+        # the convention read backwards, with no notice, because nothing
+        # counted as a collision.
+        cols = _generated_columns(
+            pd.DataFrame({"text": ["a"], "Sentiment (model)": ["neg"]})
+        )
+        assert cols == ("Sentiment (model) 2", CONFIDENCE_COL)
+
+    def test_namespace_rule_is_per_base(self):
+        # A suffixed Sentiment column must not push Confidence off its plain
+        # name, and vice versa.
+        cols = _generated_columns(
+            pd.DataFrame({"text": ["a"], "Confidence (model)": [1]})
+        )
+        assert cols == (SENTIMENT_COL, "Confidence (model) 2")
 
     def test_resolves_on_a_zero_row_frame(self):
         # df.columns is non-empty while len(df) is 0; the loop must not care.
@@ -1086,6 +1130,45 @@ class TestRenderResultsGeneratedColumns:
         assert "a column named Sentiment," in message
         assert "**Sentiment (model)**" in message
         assert "Confidence" not in message
+
+    def test_notice_names_the_blocking_column_not_the_base(self):
+        # This file has no column called "Sentiment" at all, so naming the base
+        # constant would point the user at a column that is not in their file.
+        # The notice reads off result_df instead.
+        _render_results(
+            pd.DataFrame(
+                {
+                    "Sentiment (model)": ["gt"],
+                    "Sentiment (model) 2": ["positive"],
+                    "Confidence": [0.99],
+                }
+            ),
+            "sample",
+            GeneratedColumns("Sentiment (model) 2", "Confidence"),
+        )
+        message = self.mock_st.info.call_args.args[0]
+        assert "a column named Sentiment (model)," in message
+        assert "**Sentiment (model) 2**" in message
+
+    def test_notice_names_every_blocking_column(self):
+        # Two of the user's columns stand in the way of one generated name;
+        # both are named, and the noun goes plural on the blocking count rather
+        # than on the number of renamed outputs.
+        _render_results(
+            pd.DataFrame(
+                {
+                    "Sentiment": ["gt"],
+                    "Sentiment (model)": ["gt2"],
+                    "Sentiment (model) 2": ["positive"],
+                    "Confidence": [0.99],
+                }
+            ),
+            "sample",
+            GeneratedColumns("Sentiment (model) 2", "Confidence"),
+        )
+        message = self.mock_st.info.call_args.args[0]
+        assert "columns named Sentiment and Sentiment (model)," in message
+        assert "**Sentiment (model) 2**" in message
 
     def test_notice_handles_a_confidence_only_collision(self):
         # The mirror case: a source Confidence column with no source Sentiment.
