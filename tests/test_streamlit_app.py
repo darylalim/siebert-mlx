@@ -1052,8 +1052,49 @@ class TestRenderResultsGeneratedColumns:
             GeneratedColumns("Sentiment (model)", "Confidence (model)"),
         )
         message = self.mock_st.info.call_args.args[0]
-        assert "Sentiment (model)" in message
-        assert "Confidence (model)" in message
+        assert "**Sentiment (model)**" in message
+        assert "**Confidence (model)**" in message
+        assert "columns named Sentiment and Confidence" in message
+
+    def test_notice_names_only_the_column_that_moved(self):
+        # The two names resolve independently, so this file renames only
+        # Sentiment. Bolding an unmoved Confidence alongside it would read as
+        # "both of these are new names" -- true sentence, wrong impression.
+        _render_results(
+            pd.DataFrame(
+                {
+                    "Sentiment": ["gt"],
+                    "Sentiment (model)": ["positive"],
+                    "Confidence": [0.99],
+                }
+            ),
+            "sample",
+            GeneratedColumns("Sentiment (model)", "Confidence"),
+        )
+        message = self.mock_st.info.call_args.args[0]
+        assert "a column named Sentiment," in message
+        assert "**Sentiment (model)**" in message
+        assert "Confidence" not in message
+
+    def test_notice_handles_a_confidence_only_collision(self):
+        # The mirror case: a source Confidence column with no source Sentiment.
+        # Naming SENTIMENT_COL here would point the user at a column that is
+        # not in their file at all.
+        _render_results(
+            pd.DataFrame(
+                {
+                    "Confidence": ["mine"],
+                    "Sentiment": ["positive"],
+                    "Confidence (model)": [0.99],
+                }
+            ),
+            "sample",
+            GeneratedColumns("Sentiment", "Confidence (model)"),
+        )
+        message = self.mock_st.info.call_args.args[0]
+        assert "a column named Confidence," in message
+        assert "**Confidence (model)**" in message
+        assert "Sentiment" not in message
 
     def test_no_notice_without_a_collision(self):
         _render_results(

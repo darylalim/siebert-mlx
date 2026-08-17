@@ -294,12 +294,28 @@ def _render_results(result_df, source_name, generated_cols):
     # the user needs to know what the file's headers mean. Above the all-blank
     # split so it shows on that branch too, whose download carries the same
     # headers. st.info, not st.warning: nothing failed and no data was lost.
-    if (sentiment_col, confidence_col) != (SENTIMENT_COL, CONFIDENCE_COL):
+    #
+    # Built from the columns that actually moved, not from the pair: the two
+    # names resolve independently, so a CSV carrying only Sentiment renames
+    # only Sentiment. Naming both there would be true but misread -- a bolded
+    # Confidence next to a bolded Sentiment (model) reads as "both of these
+    # are new names", when Confidence is exactly what it always was.
+    renamed = [
+        (base, resolved)
+        for base, resolved in (
+            (SENTIMENT_COL, sentiment_col),
+            (CONFIDENCE_COL, confidence_col),
+        )
+        if resolved != base
+    ]
+    if renamed:
+        noun = "a column" if len(renamed) == 1 else "columns"
+        taken = " and ".join(base for base, _ in renamed)
+        added = " and ".join(f"**{resolved}**" for _, resolved in renamed)
         st.info(
-            f"This file already has a column named {SENTIMENT_COL} or "
-            f"{CONFIDENCE_COL}, so the results were added as **{sentiment_col}** "
-            f"and **{confidence_col}**. Your own columns are unchanged, on "
-            "screen and in the download.",
+            f"This file already has {noun} named {taken}, so the model's "
+            f"output was added as {added}. Your original data is unchanged, "
+            "on screen and in the download.",
             icon=":material/info:",
         )
 
