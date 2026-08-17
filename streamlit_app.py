@@ -355,9 +355,14 @@ def _render_results(result_df, source_name, generated_cols):
         taken = " and ".join(blocking)
         added = " and ".join(f"**{resolved}**" for _, resolved in renamed)
         st.info(
+            # "including in the download" rather than "on screen and in the
+            # download": this notice also renders on the all-blank branch,
+            # which skips the results table entirely, so there is no "on
+            # screen" to be unchanged there. The download button is outside
+            # that split and always renders, so that half stays true on both.
             f"This file already has {noun} named {taken}, so the model's "
-            f"output was added as {added}. Your original data is unchanged, "
-            "on screen and in the download.",
+            f"output was added as {added}. Your original columns are "
+            "unchanged, including in the download.",
             icon=":material/info:",
         )
 
@@ -394,13 +399,16 @@ def _render_results(result_df, source_name, generated_cols):
 
         with st.container(border=True):
             st.markdown("**Sentiment distribution**")
-            # These two "Sentiment" strings key a locally built two-row chart
-            # frame, never the user's CSV: they cannot collide, must stay
-            # matched to the x= binding below, and must NOT be swept into a
-            # rename of the resolved lookups above.
+            # This key is a locally built two-row chart frame, never the user's
+            # CSV, so it cannot collide -- but it *is* the rendered axis title,
+            # so it follows the resolved name. Under a collision the literal
+            # labelled the axis "Sentiment" while the table, the download and
+            # the notice all said "Sentiment (model)", i.e. it named a column
+            # that exists in the frame and holds the user's own values. Must
+            # stay matched to the x= binding below.
             dist_df = pd.DataFrame(
                 {
-                    "Sentiment": ["positive", "negative"],
+                    sentiment_col: ["positive", "negative"],
                     "Count": [pos_count, neg_count],
                 }
             )
@@ -408,7 +416,7 @@ def _render_results(result_df, source_name, generated_cols):
             # categorical palettes per mode (light leads with #0068c9, dark
             # with #83c9ff), so the default bar adapts its lightness to the
             # background — which a single pinned hex cannot do.
-            st.bar_chart(dist_df, x="Sentiment", y="Count", horizontal=True)
+            st.bar_chart(dist_df, x=sentiment_col, y="Count", horizontal=True)
 
         with st.container(border=True):
             st.markdown("**Results**")
@@ -577,12 +585,23 @@ if df is not None:
         # click or a theme toggle) don't collapse the view or re-run inference.
         # Invalidate when the selected column no longer matches what was run.
         result_df = st.session_state.get("result_df")
-        if result_df is not None and st.session_state.get("result_col") == text_column:
-            # Indexed, not .get() with a default: the three result_* keys are
-            # written in this one branch and popped together by _clear_results,
-            # so a missing pair means broken state -- and a default of the plain
-            # names would silently tint, size and count the user's own Sentiment
-            # column on exactly the input this indirection exists for.
+        if (
+            result_df is not None
+            and st.session_state.get("result_col") == text_column
+            # Part of the guard, not a lookup: the three result_* keys are
+            # written in one branch and popped together by _clear_results, but
+            # they can still come apart across a *code* change --  streamlit's
+            # file watcher reruns the edited script against the session_state
+            # that is already there, so a session holding results from before
+            # this key existed would otherwise hit an uncaught KeyError and
+            # render a traceback in place of the page. Treating the missing
+            # pair as "no results yet" degrades to the pre-classify view.
+            and "result_generated_cols" in st.session_state
+        ):
+            # Indexed, not .get() with a default, now that the guard above
+            # settles presence: a default of the plain names would silently
+            # tint, size and count the user's own Sentiment column on exactly
+            # the input this indirection exists for.
             _render_results(
                 result_df, source_name, st.session_state["result_generated_cols"]
             )

@@ -346,3 +346,27 @@ def test_all_blank_colliding_file_shows_both_notices():
     assert any("Sentiment (model)" in i.value for i in at.info)
     assert any("No classification was performed" in i.value for i in at.info)
     assert len(at.metric) == 0
+
+
+def test_results_missing_the_generated_pair_degrade_instead_of_crashing():
+    # A session that predates result_generated_cols: streamlit's file watcher
+    # reruns an edited script against the session_state already in memory, so
+    # the three result_* keys can come apart across a code change even though
+    # they are written in one branch and popped together. Indexing the missing
+    # key rendered a KeyError traceback in place of the whole page; the guard
+    # degrades it to the pre-classify view instead.
+    at = _new_app()
+    at.session_state["df"] = pd.DataFrame({"text": ["great", "awful"]})
+    at.session_state["source_name"] = "stale_session"
+    at.session_state["result_df"] = pd.DataFrame(
+        {
+            "text": ["great", "awful"],
+            "Sentiment": ["positive", "negative"],
+            "Confidence": [0.99, 0.97],
+        }
+    )
+    at.session_state["result_col"] = "text"
+    at.run()
+    assert not at.exception
+    assert len(at.metric) == 0
+    assert not any("Classification complete" in s.value for s in at.success)

@@ -1077,6 +1077,26 @@ class TestRenderResultsGeneratedColumns:
         html = self.mock_st.dataframe.call_args.args[0].to_html()
         assert "background-color" not in html
 
+    def test_chart_axis_follows_the_generated_column(self):
+        # The chart frame is built locally, but its key is the rendered axis
+        # title. A literal there labelled the axis "Sentiment" while the table,
+        # the download and the notice all said "Sentiment (model)" -- naming a
+        # column that exists in the frame and holds the user's own values.
+        _render_results(
+            pd.DataFrame(
+                {
+                    "Sentiment": ["gt", "gt"],
+                    "Sentiment (model)": ["positive", "negative"],
+                    "Confidence": [0.99, 0.97],
+                }
+            ),
+            "sample",
+            GeneratedColumns("Sentiment (model)", "Confidence"),
+        )
+        dist_df = self.mock_st.bar_chart.call_args.args[0]
+        assert self.mock_st.bar_chart.call_args.kwargs["x"] == "Sentiment (model)"
+        assert list(dist_df.columns) == ["Sentiment (model)", "Count"]
+
     def test_all_blank_guard_reads_the_generated_column(self):
         # Ground-truth labels are non-blank while the model classified nothing;
         # reading the source column would show metrics over an empty result.
@@ -1129,7 +1149,10 @@ class TestRenderResultsGeneratedColumns:
         message = self.mock_st.info.call_args.args[0]
         assert "a column named Sentiment," in message
         assert "**Sentiment (model)**" in message
-        assert "Confidence" not in message
+        # Asserted on the bold marker, not the bare word: the notice's closing
+        # sentence is prose, and a copy edit that happens to mention confidence
+        # should not read as a failure of the resolved != base filter.
+        assert "**Confidence" not in message
 
     def test_notice_names_the_blocking_column_not_the_base(self):
         # This file has no column called "Sentiment" at all, so naming the base
@@ -1188,7 +1211,7 @@ class TestRenderResultsGeneratedColumns:
         message = self.mock_st.info.call_args.args[0]
         assert "a column named Confidence," in message
         assert "**Confidence (model)**" in message
-        assert "Sentiment" not in message
+        assert "**Sentiment" not in message
 
     def test_no_notice_without_a_collision(self):
         _render_results(
