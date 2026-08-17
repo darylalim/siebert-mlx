@@ -391,21 +391,28 @@ def _render_results(result_df, source_name, generated_cols):
             # content at 736px at any window size, so a wider browser cannot
             # rescue it. Cap every *free-text* source column rather than only
             # the classified one: a second text column blows the same budget.
-            # Numeric columns stay auto-sized because they are already narrow,
-            # and padding an `id` out to TEXT_COL_WIDTH would spend the very
-            # budget this cap exists to protect. `_is_long_text` applies that
-            # same reasoning to *short* text columns, which the dtype-only
-            # predicate used to pad out to 300px: a ground-truth Sentiment
-            # column of "positive"/"negative" auto-sizes to 67px, so capping it
-            # cost 233px and pushed Confidence off the grid. The exclusion holds
-            # the *resolved* names, which is what makes it collision-proof: a
-            # source column named Sentiment is a source column like any other,
-            # while the model's renamed column keeps the config assigned below.
+            # Narrow columns stay auto-sized: padding a 2-char `id` out to
+            # TEXT_COL_WIDTH would spend the very budget this cap exists to
+            # protect, and the same argument covers *short* text columns -- a
+            # ground-truth Sentiment column of "positive"/"negative" auto-sizes
+            # to 67px, so capping it cost 233px and pushed Confidence off the
+            # grid. `_is_long_text` is the whole test now; there is no dtype
+            # clause, because the base `Column` sets a width WITHOUT declaring
+            # a type. `TextColumn(width=...)` also emits
+            # type_config={"type": "text"}, and it was that coupling -- not any
+            # layout fact -- that forced numeric columns to be excluded
+            # wholesale: capping a numeric column meant rendering its numbers
+            # as text. Column decouples the two, so a numeric column under a
+            # >50-char header (the one shape the dtype check used to catch, and
+            # the one it could never fix) now gets capped like anything else.
+            # The exclusion holds the *resolved* names, which is what makes it
+            # collision-proof: a source column named Sentiment is a source
+            # column like any other, while the model's renamed column keeps the
+            # config assigned below.
             column_config = {
-                col: st.column_config.TextColumn(width=TEXT_COL_WIDTH)
+                col: st.column_config.Column(width=TEXT_COL_WIDTH)
                 for col in result_df.columns
                 if col not in (sentiment_col, confidence_col)
-                and _is_text_dtype(result_df[col])
                 and _is_long_text(result_df[col], col)
             }
             # Both entries drop the positional label: st.column_config documents

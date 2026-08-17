@@ -781,11 +781,17 @@ class TestRenderResultsColumnConfig:
             )
         )
         assert "text" in config
-        self.mock_st.column_config.TextColumn.assert_any_call(width=TEXT_COL_WIDTH)
+        # The base Column, not TextColumn: setting a width must not also
+        # declare the column's type. TextColumn(width=...) emits
+        # type_config={"type": "text"} alongside the width, which is what used
+        # to make capping a numeric column mean rendering it as text.
+        self.mock_st.column_config.Column.assert_any_call(width=TEXT_COL_WIDTH)
+        self.mock_st.column_config.TextColumn.assert_called_once()  # the pair only
 
-    def test_leaves_numeric_columns_auto_sized(self):
+    def test_leaves_short_numeric_columns_auto_sized(self):
         # Padding a 2-char id out to TEXT_COL_WIDTH would spend the budget the
-        # cap exists to protect, so numeric columns must be left alone.
+        # cap exists to protect. Nothing about the dtype does this now -- the
+        # id is left alone because it is *short*, exactly like a short label.
         config = self._config_for(
             pd.DataFrame(
                 {
@@ -817,13 +823,13 @@ class TestRenderResultsColumnConfig:
         assert "text" in config
         assert "label" not in config
 
-    def test_never_caps_a_numeric_column_even_under_a_long_header(self):
-        # The only case where `_is_text_dtype` still bites. int64/float64
-        # values can never reach LONG_TEXT_CHARS on their own (19 and ~24
-        # characters at most), so `_is_long_text` alone would agree with the
-        # dtype check on every *value* -- but a long enough column *name*
-        # carries a numeric column past the threshold, and configuring it as
-        # a TextColumn would render its numbers as text.
+    def test_caps_a_numeric_column_under_a_long_header(self):
+        # int64/float64 values can never reach LONG_TEXT_CHARS on their own (19
+        # and ~24 characters at most), so a long column *name* is the only way
+        # a numeric column overflows -- and it genuinely does, auto-sizing to
+        # its header. This used to be excluded by dtype and was therefore
+        # unfixable; the base Column caps it without touching the type, so it
+        # is now treated like any other over-wide column.
         long_name = "n" * (LONG_TEXT_CHARS + 1)
         config = self._config_for(
             pd.DataFrame(
@@ -835,7 +841,7 @@ class TestRenderResultsColumnConfig:
                 }
             )
         )
-        assert long_name not in config
+        assert long_name in config
         assert "text" in config
 
     def test_caps_on_a_long_header_over_short_values(self):
@@ -899,7 +905,12 @@ class TestRenderResultsColumnConfig:
             GeneratedColumns("Sentiment (model)", "Confidence"),
         )
         assert set(config) == {"text", "Sentiment", "Sentiment (model)", "Confidence"}
-        assert self.mock_st.column_config.TextColumn.call_count == 3
+        # Two width caps (text, the preserved source Sentiment) and exactly one
+        # TextColumn -- the model's own column. The counts stay put through the
+        # literal-exclusion mutation, so they are corroboration, not the
+        # tripwire; the `set(config)` assertion above is.
+        assert self.mock_st.column_config.Column.call_count == 2
+        self.mock_st.column_config.TextColumn.assert_called_once()
         self.mock_st.column_config.ProgressColumn.assert_called_once()
 
     def test_does_not_cap_a_short_source_sentiment_column(self):
