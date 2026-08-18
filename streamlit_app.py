@@ -41,6 +41,15 @@ NEGATIVE_COLOR = "#ff4b4b"
 # The chart wants the solid hue; the table wants a wash behind text. Same
 # two colors at two strengths, so this is the only thing that differs.
 TINT_ALPHA = 0.12
+# Name of the chart frame's color column. A constant for the same reason
+# SENTIMENT_COL is one: it is the frame's key *and* the color= kwarg, so a
+# typo in either builds the chart against a column that is not there. It is
+# also user-visible -- st.bar_chart puts every field in the tooltip, and
+# streamlit's own suppression for literal-color columns does not fire (it
+# tests `getattr(color_enc, 'legend', True) is not None`, and altair returns
+# a _PropertySetter there rather than the None that was set), so hovering a
+# bar shows this name beside its hex. Hence "Color" and not "_color".
+CHART_COLOR_COL = "Color"
 # Pixel cap for free-text columns in the results table. Sized against the
 # centered layout's 736px content cap: the two generated columns plus a narrow
 # id take ~278px, so 300 leaves real headroom instead of the zero slack that
@@ -384,7 +393,7 @@ def _reset_button():
     st.button("Reset", icon=":material/refresh:", key="reset", on_click=_reset)
 
 
-def _render_results(result_df, source_name, generated_cols):
+def _render_results(result_df, source_name, generated_cols) -> bool:
     # Unpacked once rather than read as generated_cols.sentiment at each of the
     # nine sites below: the lookups then read as plain column names, a near
     # literal swap of the hardcoded strings they replace, and any (sentiment,
@@ -443,12 +452,19 @@ def _render_results(result_df, source_name, generated_cols):
             icon=":material/info:",
         )
 
+    # Returned so the caller can tell "results rendered" from "a results *table*
+    # rendered". They are not the same thing on the branch below, and reading
+    # the guard instead of the outcome is what briefly left an all-blank file
+    # with no tabular data on screen at all: results existed, so the preview was
+    # suppressed, while this arm draws an info callout and no table.
     if result_df[sentiment_col].eq("").all():
         st.info(
             "All values in this column are empty. No classification was performed.",
             icon=":material/info:",
         )
+        drew_results_table = False
     else:
+        drew_results_table = True
         st.success("Classification complete!", icon=":material/check_circle:")
 
         # total > 0 guaranteed: the df.empty and all-blank branches exit before
@@ -510,7 +526,16 @@ def _render_results(result_df, source_name, generated_cols):
                     # Literal hex, not a category to be mapped: st.bar_chart
                     # documents that a color column already holding hex strings
                     # is used verbatim rather than assigned from the palette.
-                    "_color": [POSITIVE_COLOR, NEGATIVE_COLOR],
+                    #
+                    # Row order is load-bearing and the coupling is invisible:
+                    # the emitted spec carries `scale.range` in *row* order and
+                    # no `domain` at all, so Vega-Lite derives the domain by
+                    # sorting these hex strings ascending. The mapping is
+                    # therefore correct only while the column is already
+                    # ascending -- true today because "#21c354" < "#ff4b4b".
+                    # Reorder these two rows and positive draws red, with
+                    # nothing in the spec to say so.
+                    CHART_COLOR_COL: [POSITIVE_COLOR, NEGATIVE_COLOR],
                 }
             )
             # color= names the hex column above. With no color at all both
@@ -540,7 +565,7 @@ def _render_results(result_df, source_name, generated_cols):
                 dist_df,
                 x=sentiment_col,
                 y="Count",
-                color="_color",
+                color=CHART_COLOR_COL,
                 horizontal=True,
                 sort=False,
                 x_label="",
@@ -672,6 +697,7 @@ def _render_results(result_df, source_name, generated_cols):
         key="download",
         on_click="ignore",
     )
+    return drew_results_table
 
 
 uploaded_file = st.file_uploader(
@@ -863,20 +889,27 @@ if df is not None:
             # settles presence: a default of the plain names would silently
             # tint, size and count the user's own Sentiment column on exactly
             # the input this indirection exists for.
-            _render_results(
+            drew_results_table = _render_results(
                 result_df, source_name, st.session_state["result_generated_cols"]
             )
         else:
-            # Only while there are no results on screen. The results table is
-            # this same column plus the two generated ones, so once it renders
-            # the preview is five rows of text repeated directly above the full
-            # frame that contains them -- ~230px of duplication between the
-            # user and the thing they waited for. Not an expander: nothing is
-            # being tucked away for later, the element has simply finished its
-            # job. The `if` arm's guard is the whole condition, so the preview
-            # comes back exactly when it is useful again -- selecting a
-            # different column invalidates the results and returns the user to
-            # choosing, which is what the preview is for.
+            drew_results_table = False
+
+        # Bound to whether a results *table* was actually drawn, not to the
+        # guard above. The two come apart on the all-blank branch, which emits
+        # an info callout and no table: keying off the guard suppressed the
+        # preview there too and left the page with no tabular data anywhere,
+        # on exactly the run where seeing the column is what tells the user
+        # they picked the wrong one. Otherwise the results table is this same
+        # column plus the two generated ones, so leaving the preview up
+        # repeats five rows of text directly above the full frame containing
+        # them -- 274px of duplication between the user and the thing they
+        # waited for (1707 -> 1433 on mixed_sample.csv at 800px). Not an
+        # expander: nothing is being tucked away for later, the element has
+        # simply finished its job. It returns the moment it is useful again --
+        # selecting a different column invalidates the results and puts the
+        # user back to choosing, which is what the preview is for.
+        if not drew_results_table:
             with preview_slot.container():
                 st.caption("Preview of selected column")
                 # placeholder="" for the same reason as the results grid: a

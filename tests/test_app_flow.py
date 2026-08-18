@@ -277,6 +277,40 @@ def test_preview_gives_way_to_the_results_table():
     assert len(at.dataframe) == 1
 
 
+def test_preview_survives_an_all_blank_result():
+    # The one branch where "results exist" and "a results table rendered" come
+    # apart: _render_results emits an info callout and no table, so keying the
+    # preview off the results *guard* left the page with no tabular data
+    # anywhere -- on exactly the run where seeing the column is what tells the
+    # user they picked the wrong one.
+    at = _new_app()
+    at.session_state["df"] = pd.DataFrame({"text": ["", "   ", None]})
+    at.session_state["source_name"] = "blank"
+    at.session_state["result_df"] = pd.DataFrame(
+        {
+            "text": ["", "   ", None],
+            SENTIMENT_COL: ["", "", ""],
+            CONFIDENCE_COL: [0.0, 0.0, 0.0],
+        }
+    )
+    at.session_state["result_col"] = "text"
+    at.session_state["result_generated_cols"] = (SENTIMENT_COL, CONFIDENCE_COL)
+    at.run()
+    assert any("No classification was performed" in i.value for i in at.info)
+    assert PREVIEW_CAPTION in [c.value for c in at.caption]
+    assert len(at.dataframe) == 1
+
+
+def test_sample_button_says_what_it_loads():
+    # Nothing else on the landing page says what Sample does. Same class of
+    # kwarg as the selectbox help pinned above: drop it and every other test
+    # stays green while the affordance silently disappears.
+    at = _new_app().run()
+    assert at.button(key="sample").help == (
+        "Load the built-in sample CSV instead of uploading a file."
+    )
+
+
 def test_preview_returns_when_the_column_change_invalidates_results():
     # The preview is hidden on exactly the guard that shows the results, so it
     # comes back the moment the user is choosing a column again rather than

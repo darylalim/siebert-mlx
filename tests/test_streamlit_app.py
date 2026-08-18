@@ -7,6 +7,7 @@ import pytest
 
 from streamlit_app import (
     BATCH_SIZE,
+    CHART_COLOR_COL,
     CONFIDENCE_COL,
     LONG_TEXT_CHARS,
     NEGATIVE_COLOR,
@@ -1181,7 +1182,11 @@ class TestRenderResultsGeneratedColumns:
         )
         dist_df = self.mock_st.bar_chart.call_args.args[0]
         assert self.mock_st.bar_chart.call_args.kwargs["x"] == "Sentiment (model)"
-        assert list(dist_df.columns) == ["Sentiment (model)", "Count", "_color"]
+        assert list(dist_df.columns) == [
+            "Sentiment (model)",
+            "Count",
+            CHART_COLOR_COL,
+        ]
 
     def test_all_blank_guard_reads_the_generated_column(self):
         # Ground-truth labels are non-blank while the model classified nothing;
@@ -1355,8 +1360,29 @@ class TestRenderResultsRenderingKwargs:
         # shades of one hue plus a legend.
         self._render()
         dist_df = self.mock_st.bar_chart.call_args.args[0]
-        assert self.mock_st.bar_chart.call_args.kwargs["color"] == "_color"
-        assert list(dist_df["_color"]) == [POSITIVE_COLOR, NEGATIVE_COLOR]
+        sentiment_col = self.mock_st.bar_chart.call_args.kwargs["x"]
+        assert self.mock_st.bar_chart.call_args.kwargs["color"] == CHART_COLOR_COL
+        # The *pairing*, not the color column in isolation: asserting the list
+        # alone passes on a frame whose two rows were swapped without their
+        # colors, which is the one way to get positive drawn red while the
+        # column still holds exactly these two values in this order.
+        assert dict(
+            zip(dist_df[sentiment_col], dist_df[CHART_COLOR_COL], strict=True)
+        ) == {"positive": POSITIVE_COLOR, "negative": NEGATIVE_COLOR}
+
+    def test_chart_colors_ascend_because_vega_sorts_the_domain(self):
+        # st.bar_chart emits scale.range in *row* order and no domain at all,
+        # so Vega-Lite derives the domain by sorting these hex strings
+        # ascending. The pairing above therefore survives into the rendered
+        # chart only while the column is itself ascending -- true today only
+        # because "#21c354" < "#ff4b4b", which is a fact about the two hexes
+        # and not about positive and negative. Pinned separately because it is
+        # invisible in the frame: reorder the rows and the test above fails for
+        # the wrong reason, while a future third category could satisfy that
+        # one and still be mapped by sort order here.
+        self._render()
+        colors = list(self.mock_st.bar_chart.call_args.args[0][CHART_COLOR_COL])
+        assert colors == sorted(colors)
 
     def test_chart_drops_only_the_rotated_axis_title(self):
         # x_label is the title that renders rotated down the left edge and
