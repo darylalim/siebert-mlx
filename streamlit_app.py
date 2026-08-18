@@ -228,6 +228,17 @@ def process_dataframe(df, text_column, model, tokenizer):
     progress_bar = st.progress(0)
 
     valid = [(i, t) for i, t in enumerate(texts) if t.strip()]
+    # Group similar lengths together before batching. Each batch is tokenized
+    # with padding=True, i.e. padded to the longest sequence *in that batch*, so
+    # in file order a single long review drags the other seven rows of its batch
+    # through all 24 encoder layers at its width -- attention being quadratic in
+    # that width. Sorting confines the long rows to their own batches instead of
+    # spreading their cost across every batch that happens to contain one.
+    # Character length is a free proxy for token length; the exact order does
+    # not matter, only that neighbours are similar. Row order in the returned
+    # frame is untouched: `indices` below still carries the original positions
+    # and the write-back is by `idx`, not by batch position.
+    valid.sort(key=lambda pair: len(pair[1]))
 
     if not valid:
         progress_bar.progress(1.0)
@@ -523,13 +534,18 @@ def _render_results(result_df, source_name, generated_cols):
     # Serialize lazily: the callable runs only when Download is clicked, not on
     # every rerun that keeps results on screen. Built from the unstyled
     # result_df, so styling never reaches the file.
-    # on_click="ignore" makes the click frontend-only. The default is "rerun",
-    # which re-executed the whole script to redraw a page that had not changed:
-    # the notice pass, the metric aggregations, the per-cell Styler over every
-    # row up to STYLE_ROW_CAP, and _is_long_text's astype(str).str.len() sweep
-    # over every column, all to hand over a file. It composes with the lazy
-    # callable below -- marshall_file routes a callable to the deferred-file
-    # path, which runs independently of whether a rerun is requested.
+    #
+    # on_click="ignore" then drops the rerun that the click itself used to
+    # cause (the default is "rerun"), which re-executed the whole script to
+    # redraw a page that had not changed: the notice pass, the metric
+    # aggregations, the per-cell Styler over every row up to STYLE_ROW_CAP, and
+    # _is_long_text's astype(str).str.len() sweep over every column, all to
+    # hand over a file. The two settle different halves and do not conflict --
+    # marshall_file routes a callable to the deferred-file path, which is
+    # served on the download request itself and so still runs with no rerun to
+    # attach to. Everything else that reruns (theme toggle, any widget) still
+    # re-renders from session_state exactly as before, which is why the notice
+    # above must stay in this function rather than in process_dataframe.
     st.download_button(
         label="Download",
         data=lambda: result_df.to_csv(index=False),
