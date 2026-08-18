@@ -315,6 +315,53 @@ def test_large_result_skips_styler_without_error():
     assert len(at.metric) == 4
 
 
+def test_skipped_rows_get_their_own_metric():
+    # Positive and Negative divide by total, so skipped rows make the two
+    # percentages fall short of 100 with nothing on the page saying why -- on
+    # blank_cells.csv that reads 40% + 30%. The fifth card names the remainder.
+    at = _new_app()
+    at.session_state["df"] = pd.DataFrame({"text": ["great", "", "awful"]})
+    at.session_state["source_name"] = "x"
+    at.session_state["result_df"] = pd.DataFrame(
+        {
+            "text": ["great", "", "awful"],
+            "Sentiment": ["positive", "", "negative"],
+            "Confidence": [0.99, 0.0, 0.97],
+        }
+    )
+    at.session_state["result_col"] = "text"
+    at.session_state["result_generated_cols"] = (SENTIMENT_COL, CONFIDENCE_COL)
+    at.run()
+    assert len(at.metric) == 5
+    assert at.metric[4].label == "Skipped"
+    assert at.metric[4].value == "1"
+
+
+def test_no_skipped_metric_when_every_row_classified():
+    # The card is conditional: the common path stays at exactly four, so no
+    # file grows a permanently-zero metric.
+    at = _classified_state(_new_app()).run()
+    assert len(at.metric) == 4
+    assert not any(m.label == "Skipped" for m in at.metric)
+
+
+def test_auto_detect_reapplies_to_a_file_with_the_same_headers():
+    # The selectbox is keyed to the loaded dataset. Unkeyed, its identity was a
+    # hash of (label, options, index, ...), so two files with the same headers
+    # AND the same detected column shared one widget and a manual override on
+    # the first was silently reapplied to the second.
+    at = _new_app().run()
+    at.file_uploader[0].upload("a.csv", b"note,comment\nx,great\n").run()
+    assert at.selectbox[0].value == "note"  # auto-detected: first text column
+
+    at.selectbox[0].set_value("comment").run()
+    assert at.selectbox[0].value == "comment"
+
+    # Same headers, different file: auto-detect must win again.
+    at.file_uploader[0].upload("b.csv", b"note,comment\ny,awful\n").run()
+    assert at.selectbox[0].value == "note"
+
+
 def test_wide_result_under_the_row_cap_still_renders():
     # STYLE_ROW_CAP counts rows; streamlit rejects a Styler on *cells*
     # (styler.data.size > pd.options.styler.render.max_elements, 262,144). A

@@ -289,6 +289,16 @@ def process_dataframe(df, text_column, model, tokenizer):
 st.set_page_config(page_title="SiEBERT MLX", page_icon=":material/sentiment_satisfied:")
 
 st.title("SiEBERT MLX")
+# The landing page otherwise said nothing about what the app does or what it
+# wants, and every requirement surfaced only as a post-hoc rejection ("No text
+# columns detected") after the user had already chosen a file. The 512-token
+# truncation was invisible everywhere in the UI. st.caption, not st.info: this
+# is orienting metadata, not an instruction, and the callout weight is reserved
+# for things that actually happened.
+st.caption(
+    "Classify the sentiment of English text on Apple Silicon. "
+    "Upload a CSV with a text column — text longer than 512 tokens is truncated."
+)
 
 st.session_state.setdefault("uploader_key", 0)
 
@@ -398,6 +408,15 @@ def _render_results(result_df, source_name, generated_cols):
         pos_count = int((classified[sentiment_col] == "positive").sum())
         neg_count = int((classified[sentiment_col] == "negative").sum())
         avg_conf = classified[confidence_col].mean() if len(classified) else 0.0
+        # Rows process_dataframe skipped: blank, whitespace-only or missing.
+        # They are inside `total`, which is what makes the two percentages
+        # below fall short of 100 -- on samples/blank_cells.csv they read 40%
+        # and 30% with nothing on the page accounting for the other 30%. Named
+        # rather than removed from the denominator: "Total rows" should keep
+        # meaning rows in the file, and an average confidence over rows the
+        # model never scored would be meaningless, so `classified` stays the
+        # only defensible denominator for avg_conf.
+        skipped = total - len(classified)
 
         with st.container(horizontal=True):
             st.metric("Total rows", total, border=True)
@@ -412,6 +431,16 @@ def _render_results(result_df, source_name, generated_cols):
                 border=True,
             )
             st.metric("Avg confidence", f"{avg_conf:.1%}", border=True)
+            # Conditional, so the common path is still exactly four cards and
+            # no file grows a permanently-zero metric. A horizontal container
+            # wraps, so the fifth card costs no layout surgery.
+            if skipped:
+                st.metric(
+                    "Skipped",
+                    skipped,
+                    help="Empty, whitespace-only or missing text — not classified.",
+                    border=True,
+                )
 
         with st.container(border=True):
             st.markdown("**Sentiment distribution**")
@@ -640,6 +669,21 @@ if df is not None:
             options=columns,
             index=columns.index(default_col),
             help="Select the column containing English text for sentiment classification.",
+            # Scoped to the loaded dataset, not to its headers. Unkeyed, this
+            # widget's identity is a hash of (label, options, index, ...), so
+            # two files with the same header list and the same auto-detected
+            # column shared one widget: a manual override on the first silently
+            # carried into the second, and `index` -- the auto-detect -- was
+            # ignored. That rule was an implementation detail of streamlit's id
+            # computation rather than anything this app chose. Keying on the
+            # load makes it explicit: every new upload, Sample or Reset mints a
+            # fresh widget, so auto-detect applies to every file. Both parts are
+            # available by now -- uploader_key from the setdefault above, and
+            # _uploaded_id written before this branch renders.
+            key=(
+                f"text_column_{st.session_state['uploader_key']}_"
+                f"{st.session_state.get('_uploaded_id', 'sample')}"
+            ),
         )
 
         st.caption("Preview of selected column")
