@@ -185,6 +185,47 @@ def test_upload_then_reset_clears_data_and_stays_cleared():
     assert "df" not in at.session_state
 
 
+def test_removing_the_uploaded_file_clears_data_and_results():
+    # The has-file -> no-file transition. Clicking the uploader's X makes
+    # st.file_uploader return None, which fails the file_id guard, so the whole
+    # upload branch was skipped and `df` was read straight back out of
+    # session_state -- leaving the preview, metrics, chart, results table and a
+    # Download button all describing a file the uploader reported as absent.
+    at = _new_app().run()
+    at.file_uploader[0].upload("reviews.csv", b"text\ngreat\nawful\n").run()
+    assert "df" in at.session_state
+    at.session_state["result_df"] = pd.DataFrame(
+        {
+            "text": ["great", "awful"],
+            "Sentiment": ["positive", "negative"],
+            "Confidence": [0.99, 0.97],
+        }
+    )
+    at.session_state["result_col"] = "text"
+    at.session_state["result_generated_cols"] = (SENTIMENT_COL, CONFIDENCE_COL)
+
+    at.file_uploader[0].clear().run()
+    for key in ["df", "source_name", "result_df", "result_col"]:
+        assert key not in at.session_state
+    assert "result_generated_cols" not in at.session_state
+    assert not any("Classification complete" in s.value for s in at.success)
+
+    at.run()  # and it stays cleared, rather than flapping on the next rerun
+    assert "df" not in at.session_state
+
+
+def test_sample_survives_the_empty_uploader_it_is_loaded_alongside():
+    # The removal branch is guarded on _uploaded_id, not on a bare `is None`:
+    # the uploader is empty by construction on the rerun that _load_sample
+    # populates df, so a bare guard would wipe the sample it just loaded.
+    at = _new_app().run()
+    at.button(key="sample").click().run()
+    assert at.session_state["source_name"] == "mixed_sample"
+
+    at.run()
+    assert at.session_state["source_name"] == "mixed_sample"
+
+
 def test_stale_upload_does_not_override_sample():
     # Regression: a lingering uploaded file must not clobber a later Sample pick
     # on subsequent reruns.
@@ -272,6 +313,39 @@ def test_large_result_skips_styler_without_error():
     at.run()
     assert not at.exception
     assert len(at.metric) == 4
+
+
+def test_wide_result_under_the_row_cap_still_renders():
+    # STYLE_ROW_CAP counts rows; streamlit rejects a Styler on *cells*
+    # (styler.data.size > pd.options.styler.render.max_elements, 262,144). A
+    # frame under the row cap but over the cell budget therefore passed the
+    # guard, got wrapped, and raised StreamlitAPIException inside st.dataframe
+    # -- uncaught, so the script aborted and the user lost both the results
+    # table and the Download button after paying for the classification.
+    # The sibling test above covers the tall case; this is the wide one.
+    rows, cols = 700, 400  # 280,000 cells, well under STYLE_ROW_CAP rows
+    assert rows <= STYLE_ROW_CAP
+    assert rows * (cols + 2) > int(pd.options.styler.render.max_elements)
+
+    source = {f"c{i}": ["good"] * rows for i in range(cols)}
+    at = _new_app()
+    at.session_state["df"] = pd.DataFrame(source)
+    at.session_state["source_name"] = "wide"
+    at.session_state["result_df"] = pd.DataFrame(
+        {
+            **source,
+            "Sentiment": ["positive"] * rows,
+            "Confidence": [0.9] * rows,
+        }
+    )
+    at.session_state["result_col"] = "c0"
+    at.session_state["result_generated_cols"] = (SENTIMENT_COL, CONFIDENCE_COL)
+    at.run()
+    assert not at.exception
+    assert len(at.metric) == 4
+    # The two things the abort took with it, asserted directly.
+    assert len(at.dataframe) > 0
+    assert len(at.download_button) == 1
 
 
 def test_all_blank_result_shows_info_not_metrics():

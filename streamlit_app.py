@@ -430,8 +430,23 @@ def _render_results(result_df, source_name, generated_cols):
             # The Styler builds a per-cell style for every row, which defeats
             # st.dataframe's virtualization; skip the (cosmetic) tint above
             # STYLE_ROW_CAP. The CSV download uses the unstyled result_df.
+            #
+            # The second clause is not a second opinion about cost -- it is a
+            # hard limit. streamlit rejects a Styler on `styler.data.size >
+            # pd.options.styler.render.max_elements` (262,144 by default), i.e.
+            # on *cells*, while STYLE_ROW_CAP counts *rows*. A frame under 2000
+            # rows but over the cell budget -- >131 columns at 2000 rows, >262
+            # at 1000 -- passed this guard, got wrapped, and then raised
+            # StreamlitAPIException inside st.dataframe below. Nothing catches
+            # it, so the script aborted: no results table *and* no download
+            # button, losing a classification the user had already waited for.
+            # Note the tint is one column but the limit counts the whole frame.
+            # `<=` because streamlit raises on `>`, so a frame sitting exactly
+            # on max_elements is legal and should keep its tint.
             display_df = result_df
-            if len(result_df) <= STYLE_ROW_CAP:
+            if len(result_df) <= STYLE_ROW_CAP and result_df.size <= int(
+                pd.options.styler.render.max_elements
+            ):
                 display_df = result_df.style.map(
                     lambda v: sentiment_tint.get(v, ""), subset=[sentiment_col]
                 )
@@ -532,6 +547,25 @@ if uploaded_file is not None and uploaded_file.file_id != st.session_state.get(
         st.session_state["df"] = new_df
         st.session_state["source_name"] = uploaded_file.name.rsplit(".", 1)[0]
         _clear_results()
+elif uploaded_file is None and "_uploaded_id" in st.session_state:
+    # The one uploader transition nothing else observed. Clicking the widget's
+    # X makes st.file_uploader return None, which fails the guard above, so the
+    # branch was simply skipped and `df` was read straight out of session_state
+    # a few lines down -- leaving the preview, metrics, chart, results table and
+    # a Download button all describing a file the uploader now reports as
+    # absent. Same rule the failed-read arm already enforces, applied to the
+    # has-file -> no-file edge.
+    #
+    # Guarded on _uploaded_id rather than a bare `is None`: the uploader is
+    # empty by construction on the rerun that _load_sample populates df, and
+    # both _load_sample and _reset pop _uploaded_id via _reset_uploader, so
+    # neither can reach here and wipe the data it just loaded. Popping the id
+    # (rather than calling _reset_uploader) is deliberate too -- bumping
+    # uploader_key would remount a widget that is already empty.
+    st.session_state.pop("_uploaded_id", None)
+    for key in ["df", "source_name"]:
+        st.session_state.pop(key, None)
+    _clear_results()
 
 df = st.session_state.get("df")
 source_name = st.session_state.get("source_name", "")
