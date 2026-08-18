@@ -803,16 +803,16 @@ if df is not None:
             ),
         )
 
-        st.caption("Preview of selected column")
-        # placeholder="" for the same reason as the results grid below: a
-        # missing cell otherwise reads as the word "None", and blank_cells.csv
-        # has one inside the first five rows this .head() shows.
-        st.dataframe(
-            df[[text_column]].head(),
-            width="stretch",
-            hide_index=True,
-            placeholder="",
-        )
+        # Reserved here, filled at the foot of this branch. The preview has
+        # to sit above Classify -- it is the "did I pick the right column"
+        # check the user makes *before* paying for inference -- but whether to
+        # draw it at all is only settled below, after the classify branch has
+        # run. st.empty is the documented way to insert an element out of
+        # order, and it is what keeps the swap on the same run: filled in
+        # place, the preview could only react one rerun late, so the run that
+        # classified would still draw the duplicate and some later, unrelated
+        # rerun would drop it for no visible reason.
+        preview_slot = st.empty()
 
         # Horizontal container (not fixed-width columns) so each button is as
         # wide as its label+icon needs and neither wraps to a second line.
@@ -866,3 +866,26 @@ if df is not None:
             _render_results(
                 result_df, source_name, st.session_state["result_generated_cols"]
             )
+        else:
+            # Only while there are no results on screen. The results table is
+            # this same column plus the two generated ones, so once it renders
+            # the preview is five rows of text repeated directly above the full
+            # frame that contains them -- ~230px of duplication between the
+            # user and the thing they waited for. Not an expander: nothing is
+            # being tucked away for later, the element has simply finished its
+            # job. The `if` arm's guard is the whole condition, so the preview
+            # comes back exactly when it is useful again -- selecting a
+            # different column invalidates the results and returns the user to
+            # choosing, which is what the preview is for.
+            with preview_slot.container():
+                st.caption("Preview of selected column")
+                # placeholder="" for the same reason as the results grid: a
+                # missing cell otherwise reads as the word "None", and
+                # blank_cells.csv has one inside the first five rows .head()
+                # shows.
+                st.dataframe(
+                    df[[text_column]].head(),
+                    width="stretch",
+                    hide_index=True,
+                    placeholder="",
+                )

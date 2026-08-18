@@ -21,6 +21,7 @@ from streamlit_app import CONFIDENCE_COL, SENTIMENT_COL, STYLE_ROW_CAP
 # as given under both.
 APP_PATH = str(Path(__file__).parent.parent / "streamlit_app.py")
 TIMEOUT = 30
+PREVIEW_CAPTION = "Preview of selected column"
 
 
 def _new_app():
@@ -212,6 +213,94 @@ def test_results_hidden_when_selected_column_changes():
 
     at.selectbox[0].set_value("other").run()
     assert not any("Classification complete" in s.value for s in at.success)
+
+
+def _node_text(node):
+    """Label or string value of a tree node, or None -- and never raising.
+
+    Element.value resolves widgets through session_state, which raises KeyError
+    for an element the run registered no value for (the download button), so
+    this cannot be a bare getattr chain.
+    """
+    try:
+        label = getattr(node, "label", None)
+    except Exception:
+        label = None
+    if isinstance(label, str):
+        return label
+    try:
+        value = getattr(node, "value", None)
+    except Exception:
+        return None
+    return value if isinstance(value, str) else None
+
+
+def _top_level_index(at, text):
+    """Position, among the main body's direct children, of the subtree holding
+    `text` -- both things asserted on below sit inside a container."""
+    for index, node in enumerate(at.main.children.values()):
+        stack = [node]
+        while stack:
+            current = stack.pop()
+            if _node_text(current) == text:
+                return index
+            stack.extend(getattr(current, "children", {}).values())
+    return None
+
+
+def test_preview_renders_above_the_classify_button():
+    # The whole point of the st.empty slot. The preview is the "did I pick the
+    # right column" check made *before* paying for inference, but whether to
+    # draw it is settled after the classify branch runs, so it is filled out of
+    # order. Drop the slot and fill it where the decision is made and the
+    # preview renders *below* Classify -- visually wrong, and every other test
+    # here stays green.
+    at = _new_app()
+    at.session_state["df"] = pd.DataFrame({"text": ["great", "awful"]})
+    at.session_state["source_name"] = "x"
+    at.run()
+    preview = _top_level_index(at, PREVIEW_CAPTION)
+    classify = _top_level_index(at, "Classify")
+    assert preview is not None, "preview did not render without results"
+    assert classify is not None
+    assert preview < classify
+
+
+def test_preview_gives_way_to_the_results_table():
+    # The results table is this same column plus the two generated ones, so
+    # leaving the preview up repeats five rows of it directly above the full
+    # frame that contains them.
+    at = _classified_state(_new_app()).run()
+    assert not at.exception
+    assert PREVIEW_CAPTION not in [c.value for c in at.caption]
+    # The results grid, and only it.
+    assert len(at.dataframe) == 1
+
+
+def test_preview_returns_when_the_column_change_invalidates_results():
+    # The preview is hidden on exactly the guard that shows the results, so it
+    # comes back the moment the user is choosing a column again rather than
+    # staying gone for the rest of the session.
+    at = _new_app()
+    at.session_state["df"] = pd.DataFrame(
+        {"text": ["great", "awful"], "other": ["a", "b"]}
+    )
+    at.session_state["source_name"] = "x"
+    at.session_state["result_df"] = pd.DataFrame(
+        {
+            "text": ["great", "awful"],
+            "other": ["a", "b"],
+            SENTIMENT_COL: ["positive", "negative"],
+            CONFIDENCE_COL: [0.99, 0.97],
+        }
+    )
+    at.session_state["result_col"] = "text"
+    at.session_state["result_generated_cols"] = (SENTIMENT_COL, CONFIDENCE_COL)
+    at.run()
+    assert PREVIEW_CAPTION not in [c.value for c in at.caption]
+
+    at.selectbox[0].set_value("other").run()
+    assert PREVIEW_CAPTION in [c.value for c in at.caption]
 
 
 def test_upload_loads_dataframe_into_session_state():
