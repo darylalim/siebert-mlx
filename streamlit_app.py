@@ -653,7 +653,10 @@ if uploaded_file is not None and uploaded_file.file_id != st.session_state.get(
         # Drop any previously loaded data so the failed upload can't keep
         # presenting the old file's preview/results as if it were this one.
         _clear_data()
-        st.error("Could not read this file. Please check it's a valid CSV.")
+        st.error(
+            "Could not read this file. Please check it's a valid CSV.",
+            icon=":material/error:",
+        )
         # Reset belongs here for the same reason it belongs in the two warning
         # arms, and this arm needs it most: clearing df means the `if df is not
         # None:` block below never runs, so none of *its* _reset_button() call
@@ -694,10 +697,16 @@ if df is not None:
     # Both warning arms end in _reset_button(): the file is loaded but unusable,
     # which is exactly when the user needs a way back to an empty page.
     if df.empty:
-        st.warning("This CSV has no rows. Please upload a file with data.")
+        st.warning(
+            "This CSV has no rows. Please upload a file with data.",
+            icon=":material/warning:",
+        )
         _reset_button()
     elif (default_col := detect_text_column(df)) is None:
-        st.warning("No text columns detected. Please check your CSV.")
+        st.warning(
+            "No text columns detected. Please check your CSV.",
+            icon=":material/warning:",
+        )
         _reset_button()
     else:
         columns = df.columns.tolist()
