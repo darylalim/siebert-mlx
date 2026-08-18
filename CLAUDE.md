@@ -134,7 +134,14 @@ The README shows **one** screenshot, `docs/screenshot-dark.png`. There was a lig
 
 **Recaptured 2026-08-18 and current**, at **800×1433** — it had been stale since 2026-08-17, predating the landing `st.caption`, the conditional `Skipped` card, `placeholder=""`, `sort=False`, the chart-color pass and the preview slot. The height moved 1661 → 1433 mostly because the preview no longer stacks above the results, so **always re-measure `stMain.scrollHeight` per the traps below rather than reusing a recorded number** — including the 1433 in this sentence.
 
-It is captured by driving the running app with Playwright against the **system** Chrome (`chromium.launch(channel="chrome")`, so no browser download) — `uv run --with playwright python <script>`; there is no checked-in capture script. Load `samples/mixed_sample.csv` via **Sample** and click **Classify** before capturing — the README's alt text says "classifying sample data". Four traps, all found the hard way:
+It is captured by **`docs/capture_screenshot.py`** (checked in 2026-08-18; before that there was no script and each recapture was rebuilt from this section):
+
+```bash
+uv run streamlit run streamlit_app.py                              # one shell
+uv run --with playwright python docs/capture_screenshot.py [port]  # another
+```
+
+It drives the **system** Chrome (`chromium.launch(channel="chrome")`, so no browser download), loads the sample via **Sample** and clicks **Classify** — the README's alt text says "classifying sample data" — and writes next to itself, so it works from any working directory. Playwright is deliberately **not** a project dependency: it is a manual tool run a few times a year, and `--with` keeps it out of `uv sync` and CI. The cost of that choice is one `# ty: ignore[unresolved-import]` on its import, which **is** load-bearing (verified: removing it fails `ty check .`), exactly like `mlx.core`'s missing stubs. The script encodes every trap below, so prefer editing it over rewriting a capture from scratch. Four traps, all found the hard way:
 
 - **Dark mode comes from `color_scheme="dark"` on the browser context**, not a flag. With no `.streamlit/config.toml` the app follows `prefers-color-scheme`, so this exercises the real default-theme path; `streamlit run --theme.base=dark` would instead re-introduce a custom theme and screenshot something the app does not ship
 - **`full_page=True` silently returns a viewport-height image.** Streamlit scrolls an inner `overflow: auto` element, so the document never grows. The scroller is `<section data-testid="stMain">` — **not** `stAppViewContainer` (its `scrollHeight` equals the viewport) and **not** `document.body` (`scrollHeight` is literally `0`). Measure `stMain.scrollHeight`, resize the viewport to it, then capture. That number still overshoots by the shell's bottom spacer (~400px of dead air below `Download`), so trim to `stMainBlockContainer.lastElementChild`'s `getBoundingClientRect().bottom`
