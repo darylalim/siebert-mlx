@@ -643,13 +643,17 @@ if uploaded_file is not None and uploaded_file.file_id != st.session_state.get(
     "_uploaded_id"
 ):
     try:
+        # Exactly one statement in this block, and that is load-bearing.
+        # ParserError, EmptyDataError and UnicodeDecodeError are all
+        # ValueError subclasses, so the four-name tuple that used to sit
+        # below read as a curated allowlist of parse failures while being
+        # exactly `except ValueError`. Harmless while pd.read_csv is alone
+        # here; add a second statement (an encoding sniff, a dtype coercion,
+        # a size check) and its own ValueErrors get swallowed and reported to
+        # the user as a malformed CSV, cause discarded -- the plausible-and-
+        # wrong failure mode the collision rule below exists to avoid.
         new_df = pd.read_csv(uploaded_file)
-    except (
-        pd.errors.ParserError,
-        pd.errors.EmptyDataError,
-        UnicodeDecodeError,
-        ValueError,
-    ):
+    except ValueError:
         # Drop any previously loaded data so the failed upload can't keep
         # presenting the old file's preview/results as if it were this one.
         _clear_data()
