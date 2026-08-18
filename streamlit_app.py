@@ -333,6 +333,19 @@ def _reset():
     _clear_results()
 
 
+def _reset_button():
+    """The one Reset button, rendered by whichever arm of the df branch is live.
+
+    Extracted so the two warning arms can offer it too. It used to exist only
+    alongside Classify in the `else` arm, so a CSV with no rows or no text
+    column showed a dead-end warning: the only ways out were Sample or the
+    uploader's X, and the X did not clear state at all until that was fixed.
+    One `key` for all three call sites is safe -- they are mutually exclusive
+    branches, so exactly one renders per run.
+    """
+    st.button("Reset", icon=":material/refresh:", key="reset", on_click=_reset)
+
+
 def _render_results(result_df, source_name, generated_cols):
     # Unpacked once rather than read as generated_cols.sentiment at each of the
     # nine sites below: the lookups then read as plain column names, a near
@@ -658,10 +671,14 @@ df = st.session_state.get("df")
 source_name = st.session_state.get("source_name", "")
 
 if df is not None:
+    # Both warning arms end in _reset_button(): the file is loaded but unusable,
+    # which is exactly when the user needs a way back to an empty page.
     if df.empty:
         st.warning("This CSV has no rows. Please upload a file with data.")
+        _reset_button()
     elif (default_col := detect_text_column(df)) is None:
         st.warning("No text columns detected. Please check your CSV.")
+        _reset_button()
     else:
         columns = df.columns.tolist()
         text_column = st.selectbox(
@@ -706,7 +723,7 @@ if df is not None:
                 icon=":material/play_arrow:",
                 key="classify",
             )
-            st.button("Reset", icon=":material/refresh:", key="reset", on_click=_reset)
+            _reset_button()
 
         if classify_clicked:
             with st.spinner("Classifying..."):

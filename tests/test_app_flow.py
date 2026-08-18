@@ -99,6 +99,27 @@ def test_no_text_columns_shows_warning():
     assert len(at.selectbox) == 0
 
 
+def test_unusable_csv_still_offers_reset():
+    # Reset used to live only beside Classify in the `else` arm, so a file that
+    # loaded but could not be classified showed a warning with no way back --
+    # the arms that most need an escape were the two that did not have one.
+    for df, expected in [
+        (pd.DataFrame(), "no rows"),
+        (pd.DataFrame({"score": [1, 2, 3]}), "No text columns"),
+    ]:
+        at = _new_app()
+        at.session_state["df"] = df
+        at.session_state["source_name"] = "unusable"
+        at.run()
+        assert any(expected in w.value for w in at.warning)
+        assert at.button(key="reset").label == "Reset"
+
+        at.button(key="reset").click().run()
+        assert "df" not in at.session_state
+        assert "source_name" not in at.session_state
+        assert not at.warning
+
+
 def _classified_state(at):
     """Seed session_state as if a classification has already been run."""
     at.session_state["df"] = pd.DataFrame({"text": ["great", "awful"]})
