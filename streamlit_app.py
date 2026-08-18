@@ -28,6 +28,19 @@ STYLE_ROW_CAP = 2000
 # "uncollided" means.
 SENTIMENT_COL = "Sentiment"
 CONFIDENCE_COL = "Confidence"
+# The sentiment color language, defined once for the two places the app
+# speaks it: the results-table tint and the distribution chart. Streamlit's
+# own semantic green/red, both mid-lightness, so they stay legible against
+# the built-in light and dark backgrounds alike -- which is what lets them
+# be hardcoded at all, and was already the standing argument for the tint.
+# Verified on both themes. The built-in *categorical* palette is not an
+# option here: it adapts per mode but carries no positive/negative meaning,
+# so it drew the two bars in two shades of the same blue.
+POSITIVE_COLOR = "#21c354"
+NEGATIVE_COLOR = "#ff4b4b"
+# The chart wants the solid hue; the table wants a wash behind text. Same
+# two colors at two strengths, so this is the only thing that differs.
+TINT_ALPHA = 0.12
 # Pixel cap for free-text columns in the results table. Sized against the
 # centered layout's 736px content cap: the two generated columns plus a narrow
 # id take ~278px, so 300 leaves real headroom instead of the zero slack that
@@ -47,6 +60,17 @@ SAMPLE_DATA_PATH = Path(__file__).parent / "samples" / "mixed_sample.csv"
 def _is_text_dtype(series: pd.Series) -> bool:
     """String- or object-dtype, matching the pandas 3.0 default `str` dtype."""
     return pd.api.types.is_string_dtype(series) or pd.api.types.is_object_dtype(series)
+
+
+def _tint(hex_color: str) -> str:
+    """CSS background-color for a sentiment cell, from the shared hex.
+
+    Derived rather than written out a second time: the chart needs the solid
+    hex and the table needs that same hue at TINT_ALPHA, and two independent
+    literals would drift into meaning different greens.
+    """
+    r, g, b = (int(hex_color[i : i + 2], 16) for i in (1, 3, 5))
+    return f"background-color: rgba({r}, {g}, {b}, {TINT_ALPHA})"
 
 
 def detect_text_column(df: pd.DataFrame) -> str | None:
@@ -472,29 +496,54 @@ def _render_results(result_df, source_name, generated_cols):
         with st.container(border=True):
             st.markdown("**Sentiment distribution**")
             # This key is a locally built two-row chart frame, never the user's
-            # CSV, so it cannot collide -- but it *is* the rendered axis title,
-            # so it follows the resolved name. Under a collision the literal
-            # labelled the axis "Sentiment" while the table, the download and
-            # the notice all said "Sentiment (model)", i.e. it named a column
-            # that exists in the frame and holds the user's own values. Must
-            # stay matched to the x= binding below.
+            # CSV, so it cannot collide -- but it is the frame's key *and* the
+            # x= binding below, so the two must stay matched or the chart is
+            # built against a column that is not there. It follows the resolved
+            # name for the same reason everything else does: under a collision
+            # the literal named "Sentiment", which in a user's file holds the
+            # user's own values. (It used to be the rendered axis title too;
+            # x_label="" below retires that job, not this one.)
             dist_df = pd.DataFrame(
                 {
                     sentiment_col: ["positive", "negative"],
                     "Count": [pos_count, neg_count],
+                    # Literal hex, not a category to be mapped: st.bar_chart
+                    # documents that a color column already holding hex strings
+                    # is used verbatim rather than assigned from the palette.
+                    "_color": [POSITIVE_COLOR, NEGATIVE_COLOR],
                 }
             )
-            # No explicit color: Streamlit's built-in themes ship separate
-            # categorical palettes per mode (light leads with #0068c9, dark
-            # with #83c9ff), so the default bar adapts its lightness to the
-            # background — which a single pinned hex cannot do.
+            # color= names the hex column above. With no color at all both
+            # bars drew in one palette color, so the single card whose whole
+            # job is to compare positive against negative drew them
+            # indistinguishably, and the metric row above it was the only place
+            # the split was legible. Coloring *by category* instead
+            # (color=sentiment_col) does adapt per mode, but picks two shades
+            # of the same blue and adds a legend restating the axis -- it has
+            # no notion that one of these is good news. The literal hexes are
+            # the tint's, so green and red mean one thing across the card and
+            # the table below it; the usual objection to a pinned hex (it
+            # cannot flip lightness with the background) is what the
+            # mid-lightness of these two answers, and is why the tint could
+            # already hardcode them.
+            #
+            # x_label="" drops the axis title, which rendered rotated down the
+            # left edge, restated the card heading two lines above it, and took
+            # that width from the bars. y_label is deliberately left alone, so
+            # "Count" still says what the numbers are.
             # sort=False, because the default (True) hands the categorical axis
             # to Vega-Lite's ascending sort and alphabetises it: "negative"
             # above "positive", reversing the metric row directly above. False
             # means "data order", so the chart follows the frame built above
             # rather than the spelling of whatever id2label happens to return.
             st.bar_chart(
-                dist_df, x=sentiment_col, y="Count", horizontal=True, sort=False
+                dist_df,
+                x=sentiment_col,
+                y="Count",
+                color="_color",
+                horizontal=True,
+                sort=False,
+                x_label="",
             )
 
         with st.container(border=True):
@@ -503,8 +552,8 @@ def _render_results(result_df, source_name, generated_cols):
             # (per Streamlit guidance). The tint is a subtle, theme-safe rgba so
             # it reads on light and dark themes.
             sentiment_tint = {
-                "positive": "background-color: rgba(33, 195, 84, 0.12)",
-                "negative": "background-color: rgba(255, 75, 75, 0.12)",
+                "positive": _tint(POSITIVE_COLOR),
+                "negative": _tint(NEGATIVE_COLOR),
             }
             # The Styler builds a per-cell style for every row, which defeats
             # st.dataframe's virtualization; skip the (cosmetic) tint above
@@ -566,11 +615,23 @@ def _render_results(result_df, source_name, generated_cols):
             column_config[sentiment_col] = st.column_config.TextColumn(
                 help="Predicted sentiment (blank for empty or missing text).",
             )
+            # color="blue" rather than the default, which is the theme's
+            # primary -- Streamlit red on both built-in themes. A full red bar
+            # beside a 99.9% label reads as an alarm on the one column that is
+            # reporting the model's certainty, and it put red directly against
+            # the red the sentiment column beside it uses to mean "negative",
+            # so the same color meant two things in adjacent cells. A named
+            # color, not a hex, so it still adapts per mode; blue because it
+            # keeps green and red reserved for sentiment. Not "auto" (green
+            # above half, red below): a binary softmax maximum lives in
+            # [0.5, 1.0], so auto is green for every scored row and its
+            # threshold reports nothing.
             column_config[confidence_col] = st.column_config.ProgressColumn(
                 help="Model confidence in the predicted sentiment.",
                 format="percent",
                 min_value=0.0,
                 max_value=1.0,
+                color="blue",
             )
             # placeholder="" because the default renders a missing cell as the
             # literal word "None". process_dataframe's fillna("") applies to the
@@ -618,7 +679,13 @@ uploaded_file = st.file_uploader(
     type=["csv"],
     key=f"uploader_{st.session_state['uploader_key']}",
 )
-st.button("Sample", key="sample", icon=":material/dataset:", on_click=_load_sample)
+st.button(
+    "Sample",
+    key="sample",
+    icon=":material/dataset:",
+    help="Load the built-in sample CSV instead of uploading a file.",
+    on_click=_load_sample,
+)
 
 # Below the chrome, not above it. Nothing up to this point needs the model --
 # only process_dataframe does -- but streamlit emits deltas as the script runs,

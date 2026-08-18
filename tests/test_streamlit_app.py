@@ -9,6 +9,8 @@ from streamlit_app import (
     BATCH_SIZE,
     CONFIDENCE_COL,
     LONG_TEXT_CHARS,
+    NEGATIVE_COLOR,
+    POSITIVE_COLOR,
     SAMPLE_DATA_PATH,
     SENTIMENT_COL,
     STYLE_ROW_CAP,
@@ -18,6 +20,7 @@ from streamlit_app import (
     _generated_columns,
     _is_long_text,
     _render_results,
+    _tint,
     _unique_column_name,
     detect_text_column,
     load_model,
@@ -1000,6 +1003,12 @@ class TestRenderResultsColumnConfig:
             format="percent",
             min_value=0.0,
             max_value=1.0,
+            # Dropping this reverts the bar to the theme primary, which is red
+            # on both built-in themes -- an alarm color on the certainty
+            # column, sitting next to the red that means "negative" one cell
+            # over. Pinned here rather than in a test of its own because this
+            # call is already asserted whole.
+            color="blue",
         )
 
     def test_caps_the_preserved_source_column_not_the_generated_one(self):
@@ -1172,7 +1181,7 @@ class TestRenderResultsGeneratedColumns:
         )
         dist_df = self.mock_st.bar_chart.call_args.args[0]
         assert self.mock_st.bar_chart.call_args.kwargs["x"] == "Sentiment (model)"
-        assert list(dist_df.columns) == ["Sentiment (model)", "Count"]
+        assert list(dist_df.columns) == ["Sentiment (model)", "Count", "_color"]
 
     def test_all_blank_guard_reads_the_generated_column(self):
         # Ground-truth labels are non-blank while the model classified nothing;
@@ -1336,6 +1345,39 @@ class TestRenderResultsRenderingKwargs:
         # "negative" above "positive" and reversing the metric row above it.
         self._render()
         assert self.mock_st.bar_chart.call_args.kwargs["sort"] is False
+
+    def test_chart_bars_carry_the_sentiment_colors(self):
+        # Without color= both bars draw in one palette color, so the card whose
+        # only job is comparing positive against negative draws them
+        # identically. The values are hex, which st.bar_chart uses verbatim
+        # rather than as categories to assign from the palette -- pass the
+        # column of category *names* instead and it silently reverts to two
+        # shades of one hue plus a legend.
+        self._render()
+        dist_df = self.mock_st.bar_chart.call_args.args[0]
+        assert self.mock_st.bar_chart.call_args.kwargs["color"] == "_color"
+        assert list(dist_df["_color"]) == [POSITIVE_COLOR, NEGATIVE_COLOR]
+
+    def test_chart_drops_only_the_rotated_axis_title(self):
+        # x_label is the title that renders rotated down the left edge and
+        # restates the card heading two lines above it. y_label is the "Count"
+        # under the numeric axis and must survive: suppressing both leaves the
+        # numbers unexplained, which is a different regression, not a tidier
+        # one.
+        self._render()
+        kwargs = self.mock_st.bar_chart.call_args.kwargs
+        assert kwargs["x_label"] == ""
+        assert "y_label" not in kwargs
+
+    def test_chart_and_tint_share_one_color_definition(self):
+        # The chart's solid hue and the table's wash are the same two colors at
+        # two strengths. Asserted through the rendered Styler rather than by
+        # comparing constants, so a second literal green reintroduced in either
+        # place fails here instead of merely drifting.
+        self._render()
+        html = self.mock_st.dataframe.call_args.args[0].to_html()
+        assert _tint(POSITIVE_COLOR) in html
+        assert _tint(NEGATIVE_COLOR) in html
 
     def test_download_does_not_rerun_the_script(self):
         # The default "rerun" re-executes the whole page -- notice pass, metric
