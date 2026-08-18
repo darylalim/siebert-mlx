@@ -326,11 +326,25 @@ def _load_sample():
     _clear_results()
 
 
-def _reset():
+def _clear_data():
+    """Forget the loaded file and anything derived from it.
+
+    The loaded-file keys and the results always die together -- results
+    describe a specific `df`, so a survivor would be applied to the next file.
+    One helper because three call sites need the rule: Reset, the failed-read
+    arm, and the uploader's has-file -> no-file arm. It was written out
+    longhand in all three, so adding a fourth loaded-file key meant remembering
+    three unrelated places, which is the failure mode `_clear_results` already
+    exists to prevent for `result_generated_cols`.
+    """
     for key in ["df", "source_name"]:
         st.session_state.pop(key, None)
-    _reset_uploader()
     _clear_results()
+
+
+def _reset():
+    _clear_data()
+    _reset_uploader()
 
 
 def _reset_button():
@@ -638,10 +652,18 @@ if uploaded_file is not None and uploaded_file.file_id != st.session_state.get(
     ):
         # Drop any previously loaded data so the failed upload can't keep
         # presenting the old file's preview/results as if it were this one.
-        for key in ["df", "source_name"]:
-            st.session_state.pop(key, None)
-        _clear_results()
+        _clear_data()
         st.error("Could not read this file. Please check it's a valid CSV.")
+        # Reset belongs here for the same reason it belongs in the two warning
+        # arms, and this arm needs it most: clearing df means the `if df is not
+        # None:` block below never runs, so none of *its* _reset_button() call
+        # sites fire, while this error is deliberately sticky (_uploaded_id is
+        # left stale so it survives benign reruns). Without this the only exits
+        # are the uploader's X and Sample. _reset() is the right escape rather
+        # than a bare _clear_data(): it also bumps uploader_key, remounting an
+        # empty uploader, which is what actually retires the stale id and the
+        # error with it.
+        _reset_button()
     else:
         st.session_state["_uploaded_id"] = uploaded_file.file_id
         st.session_state["df"] = new_df
@@ -663,9 +685,7 @@ elif uploaded_file is None and "_uploaded_id" in st.session_state:
     # (rather than calling _reset_uploader) is deliberate too -- bumping
     # uploader_key would remount a widget that is already empty.
     st.session_state.pop("_uploaded_id", None)
-    for key in ["df", "source_name"]:
-        st.session_state.pop(key, None)
-    _clear_results()
+    _clear_data()
 
 df = st.session_state.get("df")
 source_name = st.session_state.get("source_name", "")

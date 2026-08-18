@@ -435,49 +435,52 @@ class TestLoadModel:
 # --- process_dataframe ---
 
 
-# Where the tokenizer double hands each encoded batch to the model double. The
-# real pair communicates through tensors and these two cannot: the model is
-# called as `model(**inputs)` with mx.arrays that carry no way back to the
-# strings, while the tokenizer is the only double that ever sees them. Rebound
-# (not appended to) on every encode, so a batch never outlives its call.
-_LAST_TOKENIZED_BATCH: list[str] = []
-
-
 def _make_mock_tokenizer():
     """Create a mock tokenizer that records the batch it was handed.
 
-    Still returns a bare MagicMock as its "encoding": process_dataframe only
-    does `{k: mx.array(v) for k, v in inputs.items()}` with it, and MagicMock
+    The batch lands on `.last_batch` for the paired model double to read. Still
+    returns a bare MagicMock as its "encoding": process_dataframe only does
+    `{k: mx.array(v) for k, v in inputs.items()}` with it, and MagicMock
     iterates empty, so the model ends up called with no arguments -- which is
     exactly what lets the model double answer from the recorded texts instead.
     """
     tokenizer = MagicMock()
+    tokenizer.last_batch = []
 
     def _encode(texts, **kwargs):
-        _LAST_TOKENIZED_BATCH[:] = list(texts)
+        tokenizer.last_batch = list(texts)
         return MagicMock()
 
     tokenizer.side_effect = _encode
     return tokenizer
 
 
-def _make_mock_model(sentiments):
+def _make_mock_model(sentiments, tokenizer):
     """Create a mock model whose logits follow the *text*, not the row order.
 
     `sentiments` is either one sentiment applied to every text, or a
     `{text: sentiment}` mapping. Keyed by text and not by position because
     process_dataframe sorts its work by length to cut padding waste, so the
-    order the model is called in is deliberately not the frame's order. The
-    previous positional list happened to survive that only by luck -- equal
-    lengths plus a stable sort -- and silently attached the wrong label to the
-    wrong row as soon as two texts differed in length, which is a mismatch a
-    test double should make impossible rather than merely unlikely. An unmapped
-    text raises KeyError here, so a stale fixture fails loudly.
+    order the model is called in is deliberately not the frame's order. A
+    positional list survived that only by luck -- equal lengths plus a stable
+    sort -- and silently attached the wrong label to the wrong row as soon as
+    two texts differed in length, which is a mismatch a test double should make
+    impossible rather than merely unlikely. An unmapped text raises KeyError
+    here, so a stale fixture fails loudly.
+
+    The pairing is explicit: the model double cannot see its own inputs
+    (`model(**inputs)` receives mx.arrays), so it reads the batch off the
+    `tokenizer` it was built with. Passing the tokenizer in rather than sharing
+    a module-level slot keeps the wiring per-test -- a shared slot let a model
+    double answer from whatever batch the *previous* test recorded, surfacing
+    as a `zip(..., strict=True)` error pointing nowhere near the cause.
     """
     model = MagicMock()
     model.config.id2label = {0: "NEGATIVE", 1: "POSITIVE"}
 
     def _forward(**inputs):
+        batch = tokenizer.last_batch
+        assert batch, "model double called before its tokenizer encoded anything"
         output = MagicMock()
         output.logits = mx.array(
             [
@@ -485,13 +488,23 @@ def _make_mock_model(sentiments):
                 if (sentiments if isinstance(sentiments, str) else sentiments[text])
                 == "positive"
                 else [1.0, 0.0]
-                for text in _LAST_TOKENIZED_BATCH
+                for text in batch
             ]
         )
         return output
 
     model.side_effect = _forward
     return model
+
+
+def _make_mock_pair(sentiments):
+    """`(model, tokenizer)`, wired to each other, for `process_dataframe(...)`.
+
+    Splat it into the call -- `process_dataframe(df, col, *_make_mock_pair(...))`
+    -- or bind both names when a test also asserts on the tokenizer.
+    """
+    tokenizer = _make_mock_tokenizer()
+    return _make_mock_model(sentiments, tokenizer), tokenizer
 
 
 class TestProcessDataframe:
@@ -507,8 +520,7 @@ class TestProcessDataframe:
         result, _ = process_dataframe(
             df,
             "text",
-            _make_mock_model({"good product": "positive", "bad product": "negative"}),
-            _make_mock_tokenizer(),
+            *_make_mock_pair({"good product": "positive", "bad product": "negative"}),
         )
         assert "Sentiment" in result.columns
         assert len(result) == 2
@@ -518,8 +530,7 @@ class TestProcessDataframe:
         result, _ = process_dataframe(
             df,
             "text",
-            _make_mock_model("positive"),
-            _make_mock_tokenizer(),
+            *_make_mock_pair("positive"),
         )
         assert result["Sentiment"].iloc[0] == "positive"
 
@@ -528,8 +539,7 @@ class TestProcessDataframe:
         result, _ = process_dataframe(
             df,
             "text",
-            _make_mock_model("negative"),
-            _make_mock_tokenizer(),
+            *_make_mock_pair("negative"),
         )
         assert result["Sentiment"].iloc[0] == "negative"
 
@@ -538,26 +548,23 @@ class TestProcessDataframe:
         result, _ = process_dataframe(
             df,
             "text",
-            _make_mock_model({"great": "positive", "awful": "negative"}),
-            _make_mock_tokenizer(),
+            *_make_mock_pair({"great": "positive", "awful": "negative"}),
         )
         assert result["Sentiment"].iloc[0] == "positive"
         assert result["Sentiment"].iloc[1] == "negative"
 
     def test_batching_multiple_batches(self):
+        # The paired double sizes its logits to whatever batch it is handed, so
+        # this no longer hardcodes an 8/3 split. The hand-rolled version did,
+        # and survived the length sort only because "review 0".."review 10" are
+        # all 8-9 characters -- one longer fixture, or a different n, and the
+        # shapes desynchronised from the sorted batches and surfaced as a
+        # zip(..., strict=True) error rather than as the mismatch it was.
         n = BATCH_SIZE + 3
         df = pd.DataFrame({"text": [f"review {i}" for i in range(n)]})
+        model, tokenizer = _make_mock_pair("positive")
 
-        model = MagicMock()
-        model.config.id2label = {0: "NEGATIVE", 1: "POSITIVE"}
-
-        batch1_output = MagicMock()
-        batch1_output.logits = mx.array([[0.0, 1.0]] * BATCH_SIZE)
-        batch2_output = MagicMock()
-        batch2_output.logits = mx.array([[0.0, 1.0]] * 3)
-        model.side_effect = [batch1_output, batch2_output]
-
-        result, _ = process_dataframe(df, "text", model, _make_mock_tokenizer())
+        result, _ = process_dataframe(df, "text", model, tokenizer)
 
         assert len(result) == n
         assert model.call_count == 2
@@ -571,8 +578,8 @@ class TestProcessDataframe:
         df = pd.DataFrame(
             {"text": [long_text if i % 4 == 0 else "ok" for i in range(16)]}
         )
-        tokenizer = _make_mock_tokenizer()
-        process_dataframe(df, "text", _make_mock_model("positive"), tokenizer)
+        model, tokenizer = _make_mock_pair("positive")
+        process_dataframe(df, "text", model, tokenizer)
 
         batches = [call[0][0] for call in tokenizer.call_args_list]
         assert len(batches) == 2, "16 rows at BATCH_SIZE=8 is two batches"
@@ -593,10 +600,9 @@ class TestProcessDataframe:
         result, _ = process_dataframe(
             df,
             "text",
-            _make_mock_model(
+            *_make_mock_pair(
                 dict(zip(texts, ["positive", "negative"] * 2, strict=True))
             ),
-            _make_mock_tokenizer(),
         )
         assert result["text"].tolist() == texts
         assert result["Sentiment"].tolist() == ["positive", "negative"] * 2
@@ -606,8 +612,7 @@ class TestProcessDataframe:
         process_dataframe(
             df,
             "text",
-            _make_mock_model("positive"),
-            _make_mock_tokenizer(),
+            *_make_mock_pair("positive"),
         )
         last_call_arg = self.mock_progress.progress.call_args_list[-1][0][0]
         assert last_call_arg == pytest.approx(1.0)
@@ -619,21 +624,20 @@ class TestProcessDataframe:
         process_dataframe(
             df,
             "text",
-            _make_mock_model("positive"),
-            _make_mock_tokenizer(),
+            *_make_mock_pair("positive"),
         )
         self.mock_progress.empty.assert_called_once()
 
     def test_uses_correct_text_column(self):
         df = pd.DataFrame({"col_a": ["ignore"], "col_b": ["use this"]})
-        tokenizer = _make_mock_tokenizer()
-        process_dataframe(df, "col_b", _make_mock_model("positive"), tokenizer)
+        model, tokenizer = _make_mock_pair("positive")
+        process_dataframe(df, "col_b", model, tokenizer)
         assert "use this" in tokenizer.call_args[0][0]
 
     def test_tokenizer_uses_numpy_tensors(self):
         df = pd.DataFrame({"text": ["a review"]})
-        tokenizer = _make_mock_tokenizer()
-        process_dataframe(df, "text", _make_mock_model("positive"), tokenizer)
+        model, tokenizer = _make_mock_pair("positive")
+        process_dataframe(df, "text", model, tokenizer)
         assert tokenizer.call_args[1]["return_tensors"] == "np"
 
     def test_does_not_mutate_input_dataframe(self):
@@ -641,8 +645,7 @@ class TestProcessDataframe:
         result, _ = process_dataframe(
             df,
             "text",
-            _make_mock_model("positive"),
-            _make_mock_tokenizer(),
+            *_make_mock_pair("positive"),
         )
         assert "Sentiment" not in df.columns
         assert "Sentiment" in result.columns
@@ -656,8 +659,7 @@ class TestProcessDataframe:
         result, cols = process_dataframe(
             df,
             "text",
-            _make_mock_model("positive"),
-            _make_mock_tokenizer(),
+            *_make_mock_pair("positive"),
         )
         assert cols == ("Sentiment (model)", CONFIDENCE_COL)
         assert result["Sentiment"].iloc[0] == "ground truth"
@@ -669,8 +671,7 @@ class TestProcessDataframe:
         result, cols = process_dataframe(
             df,
             "text",
-            _make_mock_model("positive"),
-            _make_mock_tokenizer(),
+            *_make_mock_pair("positive"),
         )
         assert cols == (SENTIMENT_COL, "Confidence (model)")
         assert result["Confidence"].iloc[0] == "mine"
@@ -683,8 +684,7 @@ class TestProcessDataframe:
         result, cols = process_dataframe(
             df,
             "text",
-            _make_mock_model("positive"),
-            _make_mock_tokenizer(),
+            *_make_mock_pair("positive"),
         )
         assert cols == ("Sentiment (model)", "Confidence (model)")
         assert result["Sentiment"].iloc[0] == "gt"
@@ -697,28 +697,23 @@ class TestProcessDataframe:
         result, cols = process_dataframe(
             df,
             "Sentiment",
-            _make_mock_model("positive"),
-            _make_mock_tokenizer(),
+            *_make_mock_pair("positive"),
         )
         assert result["Sentiment"].iloc[0] == "great product"
         assert result[cols.sentiment].iloc[0] == "positive"
 
     def test_appends_in_order_without_a_collision(self):
         df = pd.DataFrame({"text": ["great"]})
-        result, _ = process_dataframe(
-            df, "text", _make_mock_model("positive"), _make_mock_tokenizer()
-        )
+        result, _ = process_dataframe(df, "text", *_make_mock_pair("positive"))
         assert result.columns.tolist() == ["text", "Sentiment", "Confidence"]
 
     def test_round_trip_keeps_every_earlier_run(self):
         # Re-classifying a downloaded result must append, never displace: each
         # run's columns keep the names they were given.
         df = pd.DataFrame({"text": ["great"]})
-        first, first_cols = process_dataframe(
-            df, "text", _make_mock_model("positive"), _make_mock_tokenizer()
-        )
+        first, first_cols = process_dataframe(df, "text", *_make_mock_pair("positive"))
         second, second_cols = process_dataframe(
-            first, "text", _make_mock_model("negative"), _make_mock_tokenizer()
+            first, "text", *_make_mock_pair("negative")
         )
         assert first_cols == PLAIN_COLS
         assert second_cols == ("Sentiment (model)", "Confidence (model)")
@@ -743,8 +738,7 @@ class TestProcessDataframe:
             # "bad" is shorter than "good", so the length sort reverses them
             # before they reach the model. Keyed by text, that is a non-event;
             # a positional list of logits produced "negative" for row 0.
-            _make_mock_model({"good": "positive", "bad": "negative"}),
-            _make_mock_tokenizer(),
+            *_make_mock_pair({"good": "positive", "bad": "negative"}),
         )
         assert len(result) == 3
         assert result["Sentiment"].iloc[0] == "positive"
@@ -764,8 +758,7 @@ class TestProcessDataframe:
         result, _ = process_dataframe(
             df,
             "text",
-            _make_mock_model("positive"),
-            _make_mock_tokenizer(),
+            *_make_mock_pair("positive"),
         )
 
         assert len(result) == len(df)
@@ -793,14 +786,14 @@ class TestProcessDataframe:
 
     def test_tokenizer_called_with_truncation(self):
         df = pd.DataFrame({"text": ["a review"]})
-        tokenizer = _make_mock_tokenizer()
-        process_dataframe(df, "text", _make_mock_model("positive"), tokenizer)
+        model, tokenizer = _make_mock_pair("positive")
+        process_dataframe(df, "text", model, tokenizer)
         assert tokenizer.call_args[1]["truncation"] is True
 
     def test_tokenizer_called_with_padding(self):
         df = pd.DataFrame({"text": ["a review"]})
-        tokenizer = _make_mock_tokenizer()
-        process_dataframe(df, "text", _make_mock_model("positive"), tokenizer)
+        model, tokenizer = _make_mock_pair("positive")
+        process_dataframe(df, "text", model, tokenizer)
         assert tokenizer.call_args[1]["padding"] is True
 
     def test_uses_id2label_mapping(self):
@@ -820,8 +813,7 @@ class TestProcessDataframe:
         result, _ = process_dataframe(
             df,
             "text",
-            _make_mock_model({"good product": "positive", "bad product": "negative"}),
-            _make_mock_tokenizer(),
+            *_make_mock_pair({"good product": "positive", "bad product": "negative"}),
         )
         assert "Confidence" in result.columns
         assert len(result["Confidence"]) == 2
@@ -845,8 +837,7 @@ class TestProcessDataframe:
         result, _ = process_dataframe(
             df,
             "text",
-            _make_mock_model({"good product": "positive", "bad product": "negative"}),
-            _make_mock_tokenizer(),
+            *_make_mock_pair({"good product": "positive", "bad product": "negative"}),
         )
         assert result["Sentiment"].iloc[0] == "positive"
         assert result["Sentiment"].iloc[1] == ""
@@ -860,13 +851,12 @@ class TestProcessDataframe:
         result, _ = process_dataframe(
             df,
             "text",
-            _make_mock_model(
+            *_make_mock_pair(
                 {
                     f"text {i}": "positive" if i % 2 == 0 else "negative"
                     for i in range(5)
                 }
             ),
-            _make_mock_tokenizer(),
         )
         for val in result["Confidence"]:
             assert 0.0 <= val <= 1.0
@@ -1307,3 +1297,56 @@ class TestRenderResultsGeneratedColumns:
             PLAIN_COLS,
         )
         self.mock_st.info.assert_not_called()
+
+
+class TestRenderResultsRenderingKwargs:
+    """Pins the four render kwargs that have no other observable in the suite.
+
+    Each was verified once in a browser and then had nothing holding it: drop
+    any of them and every other test stays green while the app visibly
+    regresses. Asserted against the kwargs we pass, in the same idiom as
+    TestRenderResultsColumnConfig, so they do not churn across Streamlit
+    versions.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _mock_st(self):
+        with patch("streamlit_app.st") as mock_st:
+            self.mock_st = mock_st
+            yield
+
+    def _render(self):
+        df = pd.DataFrame(
+            {
+                "text": ["great", None, "awful"],
+                SENTIMENT_COL: ["positive", "", "negative"],
+                CONFIDENCE_COL: [0.99, 0.0, 0.97],
+            }
+        )
+        _render_results(df, "sample", PLAIN_COLS)
+
+    def test_results_table_blanks_missing_cells(self):
+        # Default renders a missing cell as the literal word "None", beside a
+        # genuinely empty generated Sentiment cell on the very same row.
+        self._render()
+        assert self.mock_st.dataframe.call_args.kwargs["placeholder"] == ""
+
+    def test_chart_keeps_data_order(self):
+        # sort=True (the default) alphabetises the categorical axis, putting
+        # "negative" above "positive" and reversing the metric row above it.
+        self._render()
+        assert self.mock_st.bar_chart.call_args.kwargs["sort"] is False
+
+    def test_download_does_not_rerun_the_script(self):
+        # The default "rerun" re-executes the whole page -- notice pass, metric
+        # aggregations, per-cell Styler, _is_long_text's sweep -- to hand over
+        # a file that is already built.
+        self._render()
+        assert self.mock_st.download_button.call_args.kwargs["on_click"] == "ignore"
+
+    def test_download_data_is_still_deferred(self):
+        # on_click="ignore" must not be mistaken for "the callable stopped
+        # mattering": the lazy data= is what keeps serialization off every
+        # rerun that merely keeps results on screen.
+        self._render()
+        assert callable(self.mock_st.download_button.call_args.kwargs["data"])

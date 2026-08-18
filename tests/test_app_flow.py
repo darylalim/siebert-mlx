@@ -43,6 +43,30 @@ def test_initial_render_has_uploader_and_sample_button():
     assert at.button(key="sample").label == "Sample"
 
 
+def test_landing_page_states_what_it_wants():
+    # The requirements used to surface only as post-hoc rejections after the
+    # user had already chosen a file, and the 512-token truncation was
+    # invisible everywhere in the UI.
+    at = _new_app().run()
+    captions = " ".join(c.value for c in at.caption)
+    assert "text column" in captions
+    assert "512 tokens" in captions
+
+
+def test_preview_blanks_missing_cells():
+    # Same rule as the results grid: the default paints a missing cell as the
+    # literal word "None", and blank_cells.csv has one inside the first five
+    # rows this preview shows.
+    at = _new_app()
+    at.session_state["df"] = pd.DataFrame({"text": ["great", None]})
+    at.session_state["source_name"] = "x"
+    at.run()
+    # HasField, not `== ""`: an unset proto string field *defaults* to "", so
+    # the bare equality passes with the fix removed and pins nothing.
+    assert at.dataframe[0].proto.HasField("placeholder")
+    assert at.dataframe[0].proto.placeholder == ""
+
+
 def test_no_column_selector_before_data_loaded():
     at = _new_app().run()
     assert len(at.selectbox) == 0
@@ -281,6 +305,22 @@ def test_malformed_upload_shows_error_and_clears_data():
     at.file_uploader[0].upload("bad.csv", b"").run()  # empty -> EmptyDataError
     assert any("Could not read" in e.value for e in at.error)
     assert "df" not in at.session_state
+
+
+def test_malformed_upload_offers_reset():
+    # The third unusable-file state, and the one that needed Reset most: this
+    # arm clears df, so the `if df is not None:` block never runs and none of
+    # its _reset_button() call sites fire, while the error is deliberately
+    # sticky. Reset also bumps uploader_key, which retires the stale
+    # _uploaded_id and takes the error with it.
+    at = _new_app().run()
+    at.file_uploader[0].upload("bad.csv", b"").run()
+    assert any("Could not read" in e.value for e in at.error)
+    assert at.button(key="reset").label == "Reset"
+
+    at.button(key="reset").click().run()
+    assert not at.error
+    assert "_uploaded_id" not in at.session_state
 
 
 def test_upload_error_persists_across_reruns():

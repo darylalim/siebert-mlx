@@ -37,7 +37,10 @@ pytestmark = pytest.mark.integration
 # process_dataframe writes, i.e. already rounded to 4 decimals. The third entry
 # is long on purpose (77 tokens vs ~10): batched with the short ones under
 # padding=True it forces most of a batch to be pad positions, which is exactly
-# what get_extended_attention_mask has to neutralize.
+# what get_extended_attention_mask has to neutralize. That still holds in the
+# single-batch test below, where all three share one batch regardless of
+# process_dataframe's length sort; the multi-batch test has to work harder for
+# it, and says how.
 PINNED = [
     ("I absolutely love this product, it works perfectly.", "positive", 0.9989),
     ("This is terrible and it broke immediately.", "negative", 0.9995),
@@ -109,19 +112,43 @@ def test_pinned_confidences_and_labels(real_model):
 
 
 def test_results_are_stable_across_batch_boundaries(real_model):
-    """Same texts, more rows than BATCH_SIZE, interleaved so padding varies.
+    """The same text in two batches, at two very different pad widths.
 
     The single-batch test above never enters process_dataframe's chunking loop,
     so it cannot catch a mis-sliced `indices[start:end]` mapping results onto
-    the wrong rows, nor padding-length sensitivity. Repeating the pinned texts
-    past BATCH_SIZE puts each one in a different batch position with a
-    different pad width, and every row still has to match its own pin.
+    the wrong rows, nor padding-length sensitivity.
+
+    Repeating the pinned texts is no longer sufficient on its own. Since
+    process_dataframe sorts by length before batching, identical copies are now
+    adjacent, so at `repeats = 4` every copy of a given text shared one batch
+    and therefore one pad width -- the padding half of this test stopped
+    testing anything and still passed. `repeats = 5` makes the 51-character
+    text *straddle* a batch boundary instead, so it is encoded once at a pad
+    width of 51 and once at 378 and has to yield the same confidence both
+    times. The assertion below pins that property rather than trusting the
+    arithmetic, so a future BATCH_SIZE, fixture or sort change that closes the
+    straddle fails loudly instead of quietly hollowing the test out.
     """
     model, tokenizer = real_model
 
-    repeats = 4
+    repeats = 5
     rows = [PINNED[index % len(PINNED)] for index in range(len(PINNED) * repeats)]
     assert len(rows) > BATCH_SIZE, "must span more than one batch to be meaningful"
+
+    # Rebuild the batches process_dataframe will form (it sorts by length, then
+    # chunks by BATCH_SIZE) and require that some text appears at more than one
+    # pad width. Without this the run is still green and proves nothing.
+    ordered = sorted((text for text, _, _ in rows), key=len)
+    pad_widths: dict[str, set[int]] = {}
+    for start in range(0, len(ordered), BATCH_SIZE):
+        batch = ordered[start : start + BATCH_SIZE]
+        widest = max(len(text) for text in batch)
+        for text in batch:
+            pad_widths.setdefault(text, set()).add(widest)
+    assert any(len(widths) > 1 for widths in pad_widths.values()), (
+        "no text spans two pad widths, so this cannot catch padding "
+        "sensitivity -- adjust `repeats` or the pinned fixtures"
+    )
 
     result, _ = process_dataframe(
         pd.DataFrame({"text": [text for text, _, _ in rows]}),
