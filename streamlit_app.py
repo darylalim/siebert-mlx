@@ -105,7 +105,15 @@ def _ensure_safetensors(model_path: str, token: str | None) -> Path:
     return local_dir
 
 
-@st.cache_resource
+# The spinner lives on the decorator rather than in a `with st.spinner(...)`
+# around the call site. `show_spinner` defaults to True, so wrapping the call
+# stacked two spinners on a cache miss -- ours plus streamlit's own "Running
+# `load_model()`.", which leaks an internal symbol onto the one screen the user
+# is stuck staring at. Passing the text here replaces that default instead of
+# competing with it. `show_time` because a cold cache is a ~1.4 GB download plus
+# the safetensors conversion: a static spinner for minutes is indistinguishable
+# from a hang, and an elapsed counter is the cheapest way to say "still working".
+@st.cache_resource(show_spinner="Loading model...", show_time=True)
 def load_model():
     """Load model and tokenizer once via @st.cache_resource in float16."""
     model_path = "siebert/sentiment-roberta-large-english"
@@ -269,9 +277,6 @@ def process_dataframe(df, text_column, model, tokenizer):
 
 st.set_page_config(page_title="SiEBERT MLX", page_icon=":material/sentiment_satisfied:")
 
-with st.spinner("Loading model..."):
-    model, tokenizer = load_model()
-
 st.title("SiEBERT MLX")
 
 st.session_state.setdefault("uploader_key", 0)
@@ -416,7 +421,14 @@ def _render_results(result_df, source_name, generated_cols):
             # categorical palettes per mode (light leads with #0068c9, dark
             # with #83c9ff), so the default bar adapts its lightness to the
             # background — which a single pinned hex cannot do.
-            st.bar_chart(dist_df, x=sentiment_col, y="Count", horizontal=True)
+            # sort=False, because the default (True) hands the categorical axis
+            # to Vega-Lite's ascending sort and alphabetises it: "negative"
+            # above "positive", reversing the metric row directly above. False
+            # means "data order", so the chart follows the frame built above
+            # rather than the spelling of whatever id2label happens to return.
+            st.bar_chart(
+                dist_df, x=sentiment_col, y="Count", horizontal=True, sort=False
+            )
 
         with st.container(border=True):
             st.markdown("**Results**")
@@ -493,16 +505,31 @@ def _render_results(result_df, source_name, generated_cols):
                 min_value=0.0,
                 max_value=1.0,
             )
+            # placeholder="" because the default renders a missing cell as the
+            # literal word "None". process_dataframe's fillna("") applies to the
+            # local `texts` list, not to the frame, so `result = df.copy()`
+            # keeps the source column's real NaN -- and the app then
+            # contradicted itself on the same row, printing "None" for the
+            # user's blank text next to a genuinely empty generated Sentiment
+            # cell. samples/blank_cells.csv is exactly this shape.
             st.dataframe(
                 display_df,
                 width="stretch",
                 hide_index=True,
                 column_config=column_config,
+                placeholder="",
             )
 
     # Serialize lazily: the callable runs only when Download is clicked, not on
     # every rerun that keeps results on screen. Built from the unstyled
     # result_df, so styling never reaches the file.
+    # on_click="ignore" makes the click frontend-only. The default is "rerun",
+    # which re-executed the whole script to redraw a page that had not changed:
+    # the notice pass, the metric aggregations, the per-cell Styler over every
+    # row up to STYLE_ROW_CAP, and _is_long_text's astype(str).str.len() sweep
+    # over every column, all to hand over a file. It composes with the lazy
+    # callable below -- marshall_file routes a callable to the deferred-file
+    # path, which runs independently of whether a rerun is requested.
     st.download_button(
         label="Download",
         data=lambda: result_df.to_csv(index=False),
@@ -510,6 +537,7 @@ def _render_results(result_df, source_name, generated_cols):
         mime="text/csv",
         icon=":material/download:",
         key="download",
+        on_click="ignore",
     )
 
 
@@ -519,6 +547,20 @@ uploaded_file = st.file_uploader(
     key=f"uploader_{st.session_state['uploader_key']}",
 )
 st.button("Sample", key="sample", icon=":material/dataset:", on_click=_load_sample)
+
+# Below the chrome, not above it. Nothing up to this point needs the model --
+# only process_dataframe does -- but streamlit emits deltas as the script runs,
+# so loading first meant the page body was *nothing but* a spinner until the
+# weights were ready: no title, no uploader, no Sample button, nothing to read
+# and nothing to click. That is minutes on a cold cache and still the fp16 load
+# plus mx.eval on every fresh process, and it is not one-session-only either --
+# st.cache_resource holds a compute lock, so every session that connects during
+# the first load blocks on it and gets the same empty page. Kept eager (rather
+# than moved into the classify branch) so the load still overlaps with the user
+# choosing a file: the uploader posts to /_stcore/upload_file, which does not
+# wait on the script thread. Still executed at import, which is what conftest's
+# module-level patches exist to intercept.
+model, tokenizer = load_model()
 
 # Load a freshly uploaded file once. Guarding on file_id stops the persisted
 # uploader value from being re-read on every rerun, which would otherwise undo
@@ -585,7 +627,15 @@ if df is not None:
         )
 
         st.caption("Preview of selected column")
-        st.dataframe(df[[text_column]].head(), width="stretch", hide_index=True)
+        # placeholder="" for the same reason as the results grid below: a
+        # missing cell otherwise reads as the word "None", and blank_cells.csv
+        # has one inside the first five rows this .head() shows.
+        st.dataframe(
+            df[[text_column]].head(),
+            width="stretch",
+            hide_index=True,
+            placeholder="",
+        )
 
         # Horizontal container (not fixed-width columns) so each button is as
         # wide as its label+icon needs and neither wraps to a second line.
