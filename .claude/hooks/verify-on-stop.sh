@@ -38,7 +38,7 @@ cd "$CLAUDE_PROJECT_DIR" 2>/dev/null || exit 0
 fingerprint() {
   local files
   files=$(git ls-files --cached --others --exclude-standard \
-    -- '*.py' pyproject.toml uv.lock samples .github/workflows 2>/dev/null) || return 0
+    -- '*.py' '*.md' pyproject.toml uv.lock samples .github/workflows 2>/dev/null) || return 0
   [ -n "$files" ] || return 0
   printf '%s\n' "$files" | tr '\n' '\0' | xargs -0 shasum 2>/dev/null |
     shasum | cut -d' ' -f1

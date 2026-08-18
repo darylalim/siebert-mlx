@@ -136,6 +136,12 @@ def test_unusable_csv_still_offers_reset():
         at.session_state["source_name"] = "unusable"
         at.run()
         assert any(expected in w.value for w in at.warning)
+        # Pinned here because nothing else in this file can see it: every other
+        # alert assertion matches `.value` (== proto.body), which is blind to
+        # the icon field, so the three failure states rendered bare for as long
+        # as they did with all tests green. `Element.__getattr__` falls back to
+        # getattr(self.proto, name), so `.icon` reads the proto directly.
+        assert all(w.icon == ":material/warning:" for w in at.warning)
         assert at.button(key="reset").label == "Reset"
 
         at.button(key="reset").click().run()
@@ -316,6 +322,8 @@ def test_malformed_upload_offers_reset():
     at = _new_app().run()
     at.file_uploader[0].upload("bad.csv", b"").run()
     assert any("Could not read" in e.value for e in at.error)
+    # See the icon note in test_unusable_csv_still_offers_reset.
+    assert all(e.icon == ":material/error:" for e in at.error)
     assert at.button(key="reset").label == "Reset"
 
     at.button(key="reset").click().run()
