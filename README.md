@@ -20,7 +20,7 @@ Streamlit application for sentiment classification in English text using [SiEBER
 - Never overwrites your data: a CSV that already has a `Sentiment` or `Confidence` column keeps it, and the model's output is added as `Sentiment (model)` / `Confidence (model)`
 - Results persist across interactions; one-click Reset from every state a loaded file can reach
 - Streamlit's built-in light and dark themes, switchable from the settings menu
-- Batched MLX inference in float16 on Apple Silicon, length-sorted to cut padding waste
+- Batched MLX inference on Apple Silicon (float16 weights), length-sorted to cut padding waste
 - Handles empty, whitespace-only, and malformed input; text longer than 512 tokens is truncated
 
 ## Requirements
