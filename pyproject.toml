@@ -25,6 +25,11 @@ dependencies = [
     # ships no safetensors on `main`. Drop it if that ever changes upstream.
     "torch",
     "safetensors",
+    # streamlit requires watchdog on every platform *except* Darwin (a holdover
+    # from when it had to be compiled there), so on the only platform this app
+    # runs on, `streamlit run` fell back to polling. 6.x ships arm64 wheels.
+    # The <7 cap mirrors streamlit's own, which its marker keeps off macOS.
+    "watchdog>=6.0.0,<7",
 ]
 
 [dependency-groups]
