@@ -491,9 +491,10 @@ class TestLoadModel:
         self, mock_model_cls, mock_config_cls, mock_tok_cls, mock_ensure, mock_mx
     ):
         # Weights must be eval'd on the loading thread; otherwise the lazy
-        # float16 arrays stay bound to that thread's (thread-local) MLX GPU
-        # stream and a later Streamlit rerun thread fails with
-        # "There is no Stream(gpu, 0) in current thread."
+        # float16 arrays stay bound to that thread's (thread-local) MLX
+        # streams and a later Streamlit rerun thread fails with
+        # "There is no Stream(cpu, 1) in current thread." (Stream(gpu, 0) on
+        # mlx 0.31).
         mock_tok_cls.from_pretrained.return_value = MagicMock()
         load_model.clear()
         load_model()

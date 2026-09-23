@@ -172,8 +172,9 @@ def load_model():
     # Force the (lazy) float16 weights to materialize on the thread that loads
     # the model. MLX streams are thread-local and Streamlit runs each rerun on a
     # fresh thread; without this, the cached weights stay as pending ops bound to
-    # the loader thread's GPU stream, and a later rerun's mx.eval fails with
-    # "There is no Stream(gpu, 0) in current thread."
+    # the loader thread's streams, and a later rerun's mx.eval fails with
+    # "There is no Stream(cpu, 1) in current thread." (mlx 0.32; 0.31 reported
+    # Stream(gpu, 0) for the same bug).
     mx.eval(model.parameters())
     tokenizer = AutoTokenizer.from_pretrained(model_path, token=token)
     return model, tokenizer
