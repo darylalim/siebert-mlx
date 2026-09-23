@@ -19,7 +19,7 @@ Streamlit application for sentiment classification in English text using [SiEBER
 - Styled results table with the prediction and confidence pinned to its left edge, and the CSV download in its header
 - Never overwrites your data: a CSV that already has a `Sentiment` or `Confidence` column keeps it, and the model's output is added as `Sentiment (model)` / `Confidence (model)`
 - Results persist across interactions; one-click Reset from every state a loaded file can reach
-- Streamlit's built-in light and dark themes, switchable from the settings menu
+- A custom dark theme — neutral graphite with one violet accent, so green and red stay reserved for sentiment — beside Streamlit's built-in light theme, switchable from the app menu
 - Batched MLX inference on Apple Silicon (float16 weights), length-sorted to cut padding waste
 - Handles empty, whitespace-only, and malformed input; text longer than 512 tokens is truncated
 

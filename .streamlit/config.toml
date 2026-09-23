@@ -1,0 +1,50 @@
+# Dark mode only. With no [theme] or [theme.light] block, light mode stays
+# Streamlit's built-in theme and the main menu keeps System / Light / Dark.
+# Colors only: fonts, sizes and radii would change on every toggle, and the
+# app's column widths (TEXT_COL_WIDTH, LONG_TEXT_CHARS) were measured at the
+# default font and size.
+#
+# Near-neutral charcoal chrome with one violet-indigo accent. Apart from that
+# accent (Classify, focus rings, the progress bar, the grid's selected cell),
+# the only saturated color on a results page is the data's own: the green and
+# red predictions, and the blue confidence bars that the rename notice shares.
+#
+# Ratios are WCAG contrast measured on the rendered page (Streamlit 1.64.0).
+# tests/test_theme.py pins the scope, the keys, and the floors for text, the
+# accent and the bars; the alert, code and border ratios are measured only.
+[theme.dark]
+# The built-in #ff4b4b is NEGATIVE_COLOR itself, so the one call to action
+# read as "negative", and its white label was 3.30:1. Hue 256 is 117 and 104
+# degrees from the two sentiment hues, 45 from the confidence bars (HSL), and
+# its derived hover #522cba stays violet. White label 4.98:1; 3.76:1 on main,
+# 3.27:1 on the sidebar.
+primaryColor = "#7a58d8"
+# Main surface and grid cells. Neutral rather than the built-in navy #0e1117,
+# so the sentiment tints keep their hue; the chart bars are 8.03:1 and 5.68:1.
+backgroundColor = "#111214"
+# Sidebar, its buttons, tooltips and the uploaded-file chip. 1.15:1 from main,
+# which is also the step between the sidebar and its input wells.
+secondaryBackgroundColor = "#1f2024"
+# Body 16.76:1. Muted text is this at 0.6 alpha: captions 6.51:1, and the
+# pinned predictions 5.95:1 and 6.10:1 on their tints. Short of white, which
+# glares over a full-width table.
+textColor = "#f2f2f4"
+# Confidence bars (ProgressColumn color="blue") 4.16:1 on the grid, where the
+# built-in #0068c9 would be 3.41:1; info text 5.50:1.
+blueColor = "#2b78cc"
+# Amber warning wash (#382d17); the built-in yellow turned olive on this
+# surface, a yellow-green beside the positive green. Text 7.40:1.
+yellowColor = "#d29922"
+# Error text 7.32:1 on its wash (the default #ff6c6c would be 5.06:1), and
+# light enough not to read as the #ff4b4b that means "negative".
+redTextColor = "#ffa3a3"
+# The default is greenTextColor, which painted the column name in the preview
+# caption the positive-sentiment green. Captions render at 0.6 opacity: 6.28:1.
+codeTextColor = "#f2f2f4"
+# Card and Download outlines 2.09:1 on main (the text-derived default would
+# be 1.78:1), sidebar button outlines 1.81:1; grid lines derive from it at 0.45
+# alpha.
+borderColor = "#48494e"
+# The derived default is a 50/50 mix of the two surfaces, barely off the cells.
+# The 0.6-alpha header text is 6.09:1 on this.
+dataframeHeaderBackgroundColor = "#1f2024"

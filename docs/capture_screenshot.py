@@ -74,10 +74,12 @@ def main() -> int:
             headless=False,
             args=["--window-position=0,0"],
         )
-        # Dark comes from the context, not from a Streamlit flag: with no
-        # .streamlit/config.toml the app follows prefers-color-scheme, so this
-        # exercises the shipped default-theme path. `--theme.base=dark` would
-        # instead screenshot a custom theme the app does not ship.
+        # Dark comes from the context, not from a Streamlit flag: the menu
+        # defaults to System, which follows prefers-color-scheme, so this
+        # exercises the shipped [theme.dark] in .streamlit/config.toml. A
+        # `--theme.base=dark` flag would do nothing -- with [theme.dark]
+        # present the frontend sets base itself for each mode -- so the
+        # browser's color scheme is the only switch.
         context = browser.new_context(
             viewport={"width": WIDTH, "height": 1000},
             color_scheme="dark",

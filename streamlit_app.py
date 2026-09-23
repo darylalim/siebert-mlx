@@ -29,11 +29,13 @@ CONFIDENCE_COL = "Confidence"
 # The sentiment color language, defined once for the two places the app
 # speaks it: the results-table tint and the distribution chart. Streamlit's
 # own semantic green/red, both mid-lightness, so they stay legible against
-# the built-in light and dark backgrounds alike -- which is what lets them
-# be hardcoded at all, and was already the standing argument for the tint.
-# Verified on both themes. The built-in *categorical* palette is not an
-# option here: it adapts per mode but carries no positive/negative meaning,
-# so it drew the two bars in two shades of the same blue.
+# the built-in light background and the app's dark theme alike -- which is
+# what lets them be hardcoded at all, and was already the standing argument
+# for the tint. The dark side is pinned in tests/test_theme.py, against
+# .streamlit/config.toml, so a change to either end is checked. The built-in
+# *categorical* palette is not an option here: it adapts per mode but carries
+# no positive/negative meaning, so it drew the two bars in two shades of the
+# same blue.
 POSITIVE_COLOR = "#21c354"
 NEGATIVE_COLOR = "#ff4b4b"
 # The chart wants the solid hue; the table wants a wash behind text. Same
@@ -783,16 +785,18 @@ def _render_results(result_df, source_name, generated_cols, announce=False) -> b
                 pinned=True,
             )
             # color="blue" rather than the default, which is the theme's
-            # primary -- Streamlit red on both built-in themes. A full red bar
-            # beside a 99.9% label reads as an alarm on the one column that is
+            # primary -- Streamlit red in light mode. A full red bar beside a
+            # 99.9% label reads as an alarm on the one column that is
             # reporting the model's certainty, and it put red directly against
             # the red the sentiment column beside it uses to mean "negative",
-            # so the same color meant two things in adjacent cells. A named
-            # color, not a hex, so it still adapts per mode; blue because it
-            # keeps green and red reserved for sentiment. Not "auto" (green
-            # above half, red below): a binary softmax maximum lives in
-            # [0.5, 1.0], so auto is green for every scored row and its
-            # threshold reports nothing.
+            # so the same color meant two things in adjacent cells. (In dark
+            # mode the primary is the violet accent .streamlit/config.toml
+            # keeps for the Classify action, so it would be the wrong job
+            # there too.) A named color, not a hex, so it still adapts per
+            # mode; blue because it keeps green and red reserved for
+            # sentiment. Not "auto" (green above half, red below): a binary
+            # softmax maximum lives in [0.5, 1.0], so auto is green for every
+            # scored row and its threshold reports nothing.
             column_config[confidence_col] = st.column_config.ProgressColumn(
                 help="Model confidence in the predicted sentiment.",
                 format="percent",

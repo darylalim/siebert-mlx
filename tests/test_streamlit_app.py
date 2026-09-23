@@ -1095,10 +1095,10 @@ class TestRenderResultsColumnConfig:
             format="percent",
             min_value=0.0,
             max_value=1.0,
-            # Dropping this reverts the bar to the theme primary, which is red
-            # on both built-in themes -- an alarm color on the certainty
-            # column, sitting next to the red that means "negative" one cell
-            # over. Pinned here rather than in a test of its own because this
+            # Dropping this reverts the bar to the theme primary: red in light
+            # mode -- an alarm color on the certainty column, sitting next to
+            # the red that means "negative" one cell over -- and in dark mode
+            # the violet accent .streamlit/config.toml keeps for Classify. Pinned here rather than in a test of its own because this
             # call is already asserted whole.
             color="blue",
             pinned=True,

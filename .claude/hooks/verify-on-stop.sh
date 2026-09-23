@@ -35,10 +35,18 @@ cd "$CLAUDE_PROJECT_DIR" 2>/dev/null || exit 0
 # public releases with contents: write, and nothing else here validates YAML or
 # shell. Adding the path alone would have been pointless -- ruff/ty/pytest never
 # read it -- so it lands together with the actionlint gate below.
+#
+# .streamlit/config.toml is in scope because pytest reads it twice over:
+# tests/test_theme.py parses it directly, and every test module that imports
+# streamlit_app makes streamlit parse it at collection as the $CWD project
+# config (this hook cds to the project dir first), where a misplaced theme
+# section raises. A palette-only edit that broke a contrast floor would
+# otherwise skip the gate that pins it.
 fingerprint() {
   local files
   files=$(git ls-files --cached --others --exclude-standard \
-    -- '*.py' '*.md' pyproject.toml uv.lock samples .github/workflows 2>/dev/null) || return 0
+    -- '*.py' '*.md' pyproject.toml uv.lock samples .github/workflows \
+    .streamlit/config.toml 2>/dev/null) || return 0
   [ -n "$files" ] || return 0
   printf '%s\n' "$files" | tr '\n' '\0' | xargs -0 shasum 2>/dev/null |
     shasum | cut -d' ' -f1
