@@ -512,8 +512,9 @@ def _make_mock_tokenizer():
     The batch lands on `.last_batch` for the paired model double to read. Still
     returns a bare MagicMock as its "encoding": process_dataframe only does
     `{k: mx.array(v) for k, v in inputs.items()}` with it, and MagicMock
-    iterates empty, so the model ends up called with no arguments -- which is
-    exactly what lets the model double answer from the recorded texts instead.
+    iterates empty, so none of the tokenized inputs reach the model: it is
+    called with only `return_dict=True` -- which is exactly why the model double
+    answers from the recorded texts instead.
     """
     tokenizer = MagicMock()
     tokenizer.last_batch = []
@@ -639,6 +640,19 @@ class TestProcessDataframe:
 
         assert len(result) == n
         assert model.call_count == 2
+
+    def test_forward_passes_return_dict_explicitly(self):
+        # Left as None, mlx-transformers falls back to config.use_return_dict, a
+        # deprecated transformers property. Its removal would surface only on a
+        # real classify -- this suite mocks the model -- so pin the argument on
+        # every batch rather than trusting the one call site to keep it.
+        df = pd.DataFrame({"text": [f"review {i}" for i in range(BATCH_SIZE + 3)]})
+        model, tokenizer = _make_mock_pair("positive")
+
+        process_dataframe(df, "text", model, tokenizer)
+
+        assert model.call_count == 2
+        assert all(c.kwargs.get("return_dict") is True for c in model.call_args_list)
 
     def test_batches_group_similar_lengths_together(self):
         # The padding saving, stated as a property rather than a timing: with

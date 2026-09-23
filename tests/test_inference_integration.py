@@ -80,7 +80,12 @@ def test_weights_are_float16_but_logits_are_float32(real_model):
         padding=True,
         truncation=True,
     )
-    logits = model(**{k: mx.array(v) for k, v in inputs.items()}).logits
+    # Same call shape as process_dataframe: a bare model(**inputs) would read the
+    # deprecated config.use_return_dict, and its removal upstream would fail this
+    # dtype tripwire for a reason unrelated to the dtype it pins.
+    logits = model(
+        **{k: mx.array(v) for k, v in inputs.items()}, return_dict=True
+    ).logits
     mx.eval(logits)
 
     assert logits.dtype == mx.float32

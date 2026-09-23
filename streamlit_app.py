@@ -300,7 +300,13 @@ def process_dataframe(df, text_column, model, tokenizer):
             )
             inputs = {k: mx.array(v) for k, v in inputs.items()}
 
-            probs = mx.softmax(model(**inputs).logits, axis=-1)
+            # return_dict=True explicitly: left as None, mlx-transformers'
+            # RobertaForSequenceClassification.__call__ falls back to
+            # config.use_return_dict, a property transformers has deprecated (it
+            # logs a warning that only set_verbosity_error was hiding) and is
+            # pruning deprecations like it. Removal would be an AttributeError on
+            # the first classify that the mocked suite cannot see. Same logits.
+            probs = mx.softmax(model(**inputs, return_dict=True).logits, axis=-1)
             max_probs = mx.max(probs, axis=-1)
             preds = mx.argmax(probs, axis=-1)
             mx.eval(max_probs, preds)
