@@ -28,7 +28,7 @@ DEFAULT_PORT = 8501
 # which both shows and shifts the centered column left by its own width. Page
 # scroller only -- the results grid's own scrollbar is a real affordance.
 CHROME_CSS = """
-header, [data-testid="stToolbar"], [data-testid="stDecoration"],
+header, [data-testid="stToolbar"],
 [data-testid="stStatusWidget"] { display: none !important; }
 [data-testid="stMainBlockContainer"] { padding-top: 2rem !important; }
 section[data-testid="stMain"] { scrollbar-width: none !important; }
