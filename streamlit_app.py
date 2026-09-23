@@ -4,10 +4,7 @@ from collections.abc import Collection
 from pathlib import Path
 from typing import NamedTuple, cast
 
-# mlx 0.32.0 ships no .pyi stubs for its compiled `core` extension (0.31.2 did),
-# and ty cannot resolve a binary module without one. Remove the suppression once
-# upstream restores the stubs.
-import mlx.core as mx  # ty: ignore[unresolved-import]
+import mlx.core as mx
 import pandas as pd
 import streamlit as st
 from dotenv import load_dotenv
@@ -295,8 +292,8 @@ def process_dataframe(df, text_column, model, tokenizer):
             preds = mx.argmax(probs, axis=-1)
             mx.eval(max_probs, preds)
 
-            # preds/max_probs are 1-D, so .tolist() is always a list here;
-            # cast narrows mlx's `int | float | list` return type for the checker.
+            # preds/max_probs are 1-D, so .tolist() is always a list here; cast
+            # narrows mlx's `list_or_scalar` (a scalar or nested list) for the checker.
             batch_preds = cast(list[int], preds.tolist())
             batch_confs = cast(list[float], max_probs.tolist())
             for idx, pred, conf in zip(

@@ -1,7 +1,6 @@
 from unittest.mock import MagicMock, patch
 
-# See the matching note in streamlit_app.py: mlx 0.32.0 dropped its .pyi stubs.
-import mlx.core as mx  # ty: ignore[unresolved-import]
+import mlx.core as mx
 import pandas as pd
 import pytest
 

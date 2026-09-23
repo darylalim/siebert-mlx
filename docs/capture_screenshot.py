@@ -13,8 +13,8 @@ Screenshots section; read that before changing any of them.
 
 import sys
 
-# Not a project dependency (see the module docstring), so it cannot resolve
-# here -- same suppression as mlx.core's missing stubs in streamlit_app.py.
+# Not a project dependency (see the module docstring), so ty cannot resolve it
+# here; the suppression is load-bearing (removing it fails `ty check .`).
 from playwright.sync_api import sync_playwright  # ty: ignore[unresolved-import]
 
 OUT = "screenshot-dark.png"

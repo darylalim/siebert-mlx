@@ -6,7 +6,10 @@ license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.12"
 dependencies = [
-    "mlx",
+    # ty resolves the compiled mlx.core only through its .pyi stubs, which 0.32.0
+    # alone shipped without (0.31.2 and 0.32.1+ have them), and the import no
+    # longer carries a ty: ignore -- so a resolve onto 0.32.0 would fail ty check.
+    "mlx>=0.32.1",
     "mlx-transformers",
     "python-dotenv",
     "pandas",
@@ -17,7 +20,7 @@ dependencies = [
     # here regardless of who else pulls them in (safetensors still arrives via
     # mlx-transformers and transformers; torch no longer arrives at all, since
     # mlx-transformers 0.3.0 dropped it and now rejects .bin checkpoints
-    # outright). torch is ~515 MB and exists purely for the one-time
+    # outright). torch is ~550 MB and exists purely for the one-time
     # pytorch_model.bin -> safetensors conversion, because the SiEBERT repo
     # ships no safetensors on `main`. Drop it if that ever changes upstream.
     "torch",

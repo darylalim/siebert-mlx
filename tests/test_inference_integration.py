@@ -24,7 +24,7 @@ with::
     uv run pytest --integration
 """
 
-import mlx.core as mx  # ty: ignore[unresolved-import]
+import mlx.core as mx
 import pandas as pd
 import pytest
 

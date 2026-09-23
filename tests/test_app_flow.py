@@ -218,9 +218,10 @@ def test_results_hidden_when_selected_column_changes():
 def _node_text(node):
     """Label or string value of a tree node, or None -- and never raising.
 
-    Element.value resolves widgets through session_state, which raises KeyError
-    for an element the run registered no value for (the download button), so
-    this cannot be a bare getattr chain.
+    Defensive rather than required as of streamlit 1.64.0: under 1.61.1 an
+    UnknownElement's .value (the bar chart's vega_lite_chart, whose proto id is
+    "") indexed session_state and raised KeyError. 1.64.0 catches that and falls
+    back to a proto field, but the guard keeps the walk safe across versions.
     """
     try:
         label = getattr(node, "label", None)
