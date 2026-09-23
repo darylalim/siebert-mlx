@@ -398,14 +398,15 @@ def _reset():
 
 
 def _reset_button():
-    """The one Reset button, rendered by whichever arm of the df branch is live.
+    """The one Reset button, rendered by whichever arm is live.
 
     Extracted so the two warning arms can offer it too. It used to exist only
     alongside Classify in the `else` arm, so a CSV with no rows or no text
     column showed a dead-end warning: the only ways out were Sample or the
     uploader's X, and the X did not clear state at all until that was fixed.
-    One `key` for all three call sites is safe -- they are mutually exclusive
-    branches, so exactly one renders per run.
+    One `key` across every call site is safe: the df branch's arms are mutually
+    exclusive, and the failed-read arm pops `df`, so the df branch never runs
+    alongside it -- exactly one renders per run.
     """
     st.button("Reset", icon=":material/refresh:", key="reset", on_click=_reset)
 
