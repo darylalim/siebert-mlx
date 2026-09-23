@@ -11,12 +11,12 @@ Streamlit application for sentiment classification in English text using [SiEBER
 
 ## Features
 
+- Wide layout: upload, column picker and Classify/Reset in a sidebar, with the main area left to your data
 - Upload a CSV or try built-in sample data
-- Auto-detects text columns with manual override
+- Auto-detects text columns with manual override, and previews the whole file with the selected column first
 - Binary sentiment (positive/negative) with confidence scores
-- Summary metric cards: total rows, positive/negative counts, average confidence, plus a skipped count when the file has blank text cells
-- Sentiment-distribution chart
-- Styled results table with CSV download
+- Summary metric cards: total rows, positive/negative counts, average confidence, plus a skipped count when the file has blank text cells, beside a sentiment-distribution chart
+- Styled results table with the prediction and confidence pinned to its left edge, and the CSV download in its header
 - Never overwrites your data: a CSV that already has a `Sentiment` or `Confidence` column keeps it, and the model's output is added as `Sentiment (model)` / `Confidence (model)`
 - Results persist across interactions; one-click Reset from every state a loaded file can reach
 - Streamlit's built-in light and dark themes, switchable from the settings menu

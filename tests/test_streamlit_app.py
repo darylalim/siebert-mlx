@@ -11,6 +11,7 @@ import pytest
 from streamlit_app import (
     BATCH_SIZE,
     CHART_COLOR_COL,
+    CHART_HEIGHT,
     CONFIDENCE_COL,
     LONG_TEXT_CHARS,
     NEGATIVE_COLOR,
@@ -952,12 +953,15 @@ class TestProcessDataframe:
 
 
 class TestRenderResultsColumnConfig:
-    """Pins the width cap that keeps Confidence's percentage on the grid.
+    """Pins the width cap that keeps a laptop-width results grid unscrolled.
 
-    Without it a free-text column is "sized to fit the cell contents" and
-    pushes Confidence past the 736px content cap, clipping the percentage at
-    every window width. Asserted against the kwargs we pass to st.dataframe —
-    our own call, not a Streamlit proto — so it does not churn across versions.
+    Without it a free-text column auto-sizes up to glide's 500px ceiling, and
+    the grid -- the window less ~494px with the sidebar open, 606px at 1100 --
+    needs a horizontal scroll for the Sample file below a 1222px window; the
+    cap moves that onset to 1022. (Sentiment and Confidence are pinned, so a
+    scroll moves only the user's columns, but it is still a scroll.) Asserted
+    against the kwargs we pass to st.dataframe — our own call, not a Streamlit
+    proto — so it does not churn across versions.
     """
 
     @pytest.fixture(autouse=True)
@@ -1079,7 +1083,12 @@ class TestRenderResultsColumnConfig:
         # the positional label so the header self-syncs with the frame, and
         # only pinning the full kwargs makes a re-added literal label fail.
         self.mock_st.column_config.TextColumn.assert_called_once_with(
-            help="Predicted sentiment (blank for empty or missing text)."
+            help="Predicted sentiment (blank for empty or missing text).",
+            # Pinned: a stretched grid hands its spare width to every unpinned
+            # column in equal shares, so unpinned, these two took as much of
+            # it as the review text did; pinned, they also stay in view when a
+            # narrow window scrolls the grid sideways.
+            pinned=True,
         )
         self.mock_st.column_config.ProgressColumn.assert_called_once_with(
             help="Model confidence in the predicted sentiment.",
@@ -1092,6 +1101,7 @@ class TestRenderResultsColumnConfig:
             # over. Pinned here rather than in a test of its own because this
             # call is already asserted whole.
             color="blue",
+            pinned=True,
         )
 
     def test_caps_the_preserved_source_column_not_the_generated_one(self):
@@ -1129,7 +1139,8 @@ class TestRenderResultsColumnConfig:
     def test_does_not_cap_a_short_source_sentiment_column(self):
         # The real labeled-CSV shape, and the one that overflowed: an 8-char
         # ground-truth column must be left auto-sized so Confidence keeps its
-        # place on the grid. Measured 876/670 before, 670/670 after.
+        # place on the grid. Measured 876/670 before, 670/670 after, in the
+        # retired centered layout's fixed 670px grid.
         config = self._config_for(
             pd.DataFrame(
                 {
@@ -1500,3 +1511,49 @@ class TestRenderResultsRenderingKwargs:
         # rerun that merely keeps results on screen.
         self._render()
         assert callable(self.mock_st.download_button.call_args.kwargs["data"])
+
+    def test_completion_is_a_toast_on_the_classify_run_only(self):
+        # A persistent st.success re-announced "Classification complete!" on
+        # every rerun that kept results on screen -- switching the column away
+        # and back included, with nothing classified.
+        self._render()
+        self.mock_st.toast.assert_not_called()
+        self.mock_st.success.assert_not_called()
+
+        df = pd.DataFrame(
+            {"text": ["great"], SENTIMENT_COL: ["positive"], CONFIDENCE_COL: [0.99]}
+        )
+        _render_results(df, "sample", PLAIN_COLS, announce=True)
+        self.mock_st.toast.assert_called_once_with(
+            "Classification complete!", icon=":material/check_circle:"
+        )
+
+    def test_an_all_blank_run_is_never_announced_as_complete(self):
+        df = pd.DataFrame(
+            {"text": ["", "  "], SENTIMENT_COL: ["", ""], CONFIDENCE_COL: [0.0, 0.0]}
+        )
+        _render_results(df, "sample", PLAIN_COLS, announce=True)
+        self.mock_st.toast.assert_not_called()
+
+    def test_metric_cards_are_content_sized(self):
+        # The chart card shares their row and is its one stretching child, so
+        # it takes the spare width. Stretched cards split the row unevenly by
+        # label length, and a card wrapped onto its own row filled all of it.
+        df = pd.DataFrame(
+            {
+                "text": ["great", ""],
+                SENTIMENT_COL: ["positive", ""],
+                CONFIDENCE_COL: [0.99, 0.0],
+            }
+        )
+        _render_results(df, "sample", PLAIN_COLS)
+        calls = self.mock_st.metric.call_args_list
+        assert len(calls) == 5  # the Skipped card included
+        assert all(call.kwargs["width"] == "content" for call in calls)
+
+    def test_chart_is_sized_for_the_metric_row(self):
+        # The default height sizes the chart for a card of its own, which in
+        # the shared row would make the band several times taller than the
+        # metric cards beside it.
+        self._render()
+        assert self.mock_st.bar_chart.call_args.kwargs["height"] == CHART_HEIGHT

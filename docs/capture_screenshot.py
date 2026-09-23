@@ -18,15 +18,25 @@ import sys
 from playwright.sync_api import sync_playwright  # ty: ignore[unresolved-import]
 
 OUT = "screenshot-dark.png"
-# Above ~800 only adds side margin: the centered layout caps content at 736px.
-WIDTH = 800
+# layout="wide" has no content cap, so width is a real choice: with the 300px
+# sidebar open the main block is the window minus 300 and the results grid the
+# window minus ~494. 1440 is a common laptop viewport, and the narrowest where
+# the distribution chart in the metric row still gets a comfortable card (at
+# 1280 it is squeezed to ~215px; at 1100 it wraps onto its own row). Wider
+# only shrinks the text once GitHub scales the image to its column. Never
+# below 864 (a padding breakpoint makes the grid non-monotonic) or 768 (an
+# open sidebar overlays the main area instead of pushing it aside).
+WIDTH = 1440
 DEFAULT_PORT = 8501
 
 # The toolbar lands in the frame otherwise. The stMain rule is the headed-only
 # scrollbar: stMain keeps ~160px of overflow past the trimmed viewport because
 # of the shell's bottom spacer, and macOS Chrome paints a real bar for it,
-# which both shows and shifts the centered column left by its own width. Page
-# scroller only -- the results grid's own scrollbar is a real affordance.
+# which both shows and narrows the main area (and the grid in it) by its own
+# width. Page scroller only -- the results grid's own scrollbar is a real
+# affordance. `header` matches only stHeader, the main-area toolbar: the
+# sidebar's own header (stSidebarHeader, holding the collapse button) is not a
+# <header> element and stays in the shot, which is right -- it is real UI.
 CHROME_CSS = """
 header, [data-testid="stToolbar"],
 [data-testid="stStatusWidget"] { display: none !important; }
@@ -82,7 +92,12 @@ def main() -> int:
         page.wait_for_timeout(2_000)
         page.locator('button:has-text("Classify")').first.click()
         page.wait_for_selector("text=Classification complete", timeout=180_000)
-        page.wait_for_timeout(2_500)
+        # "Classification complete!" is a toast (~4s), not part of the page:
+        # wait it out so the shot shows the state the user is left with.
+        page.wait_for_selector(
+            '[data-testid="stToast"]', state="detached", timeout=30_000
+        )
+        page.wait_for_timeout(1_000)
 
         info = page.evaluate(MEASURE)
         height = info["contentBottom"]
@@ -92,10 +107,14 @@ def main() -> int:
         page.wait_for_timeout(800)
 
         # A headed window cannot exceed the physical screen, so the viewport can
-        # come back short and clip the capture the same way full_page=True does.
-        # CDP is not window-bounded.
-        if page.evaluate("() => window.innerHeight") < height:
-            print(f"window capped below {height}px; overriding metrics via CDP")
+        # come back short and clip the capture the same way full_page=True does
+        # -- in width too, now that WIDTH is 1440, which a scaled display can
+        # undercut. CDP is not window-bounded.
+        inner_w, inner_h = page.evaluate(
+            "() => [window.innerWidth, window.innerHeight]"
+        )
+        if inner_w < WIDTH or inner_h < height:
+            print(f"window capped below {WIDTH}x{height}; overriding metrics via CDP")
             cdp = context.new_cdp_session(page)
             cdp.send(
                 "Emulation.setDeviceMetricsOverride",
@@ -108,6 +127,11 @@ def main() -> int:
             )
             page.wait_for_timeout(800)
 
+        # The pointer is still over Classify from the click, which would
+        # capture the button in its hover color; park it on the (hidden)
+        # header's blank corner.
+        page.mouse.move(WIDTH - 5, 5)
+        page.wait_for_timeout(300)
         page.screenshot(path=out_path)
         browser.close()
 

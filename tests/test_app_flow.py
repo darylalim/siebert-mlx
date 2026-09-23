@@ -8,12 +8,24 @@ so these still need the hub or a warm ~/.cache/huggingface for ~1.2 MB of
 config/tokenizer files -- a cold cache with no network fails at collection.
 """
 
+import json
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
+import mlx.core as mx
 import pandas as pd
+import pytest
+import streamlit
 from streamlit.testing.v1 import AppTest
 
-from streamlit_app import CONFIDENCE_COL, SENTIMENT_COL, STYLE_ROW_CAP
+from streamlit_app import (
+    CONFIDENCE_COL,
+    LONG_TEXT_CHARS,
+    SENTIMENT_COL,
+    STYLE_ROW_CAP,
+    TEXT_COL_WIDTH,
+)
 
 # Absolute, because AppTest.from_file resolves a *relative* path against the
 # calling file (this module's tests/ directory) as of streamlit 1.61, where it
@@ -21,11 +33,29 @@ from streamlit_app import CONFIDENCE_COL, SENTIMENT_COL, STYLE_ROW_CAP
 # as given under both.
 APP_PATH = str(Path(__file__).parent.parent / "streamlit_app.py")
 TIMEOUT = 30
-PREVIEW_CAPTION = "Preview of selected column"
+PREVIEW_LABEL = "**Preview**"
+GET_STARTED_LABEL = "**Get started**"
+RESULTS_LABEL = "**Results**"
 
 
 def _new_app():
     return AppTest.from_file(APP_PATH, default_timeout=TIMEOUT)
+
+
+def _has_card(block, label):
+    """Whether `block` holds a card headed by the bold markdown `label`."""
+    return any(m.value == label for m in block.markdown)
+
+
+def _results_rendered(at):
+    """Whether the results table's card is on the page.
+
+    The observable every "did results render" assertion here uses. It used to
+    be the "Classification complete!" callout, which is now a toast fired only
+    on the run that classified -- and these tests hand-seed results rather than
+    click Classify, so it never appears in them at all.
+    """
+    return _has_card(at.main, RESULTS_LABEL)
 
 
 def test_app_starts_without_exception():
@@ -49,15 +79,17 @@ def test_landing_page_states_what_it_wants():
     # user had already chosen a file, and the 512-token truncation was
     # invisible everywhere in the UI.
     at = _new_app().run()
-    captions = " ".join(c.value for c in at.caption)
-    assert "text column" in captions
-    assert "512 tokens" in captions
+    # The truncation note is in the page caption, which renders in every
+    # state; the requirement is in the Get started card, which is where the
+    # landing page tells the user what to do.
+    assert any("512 tokens" in c.value for c in at.main.caption)
+    assert any("with a text column" in m.value for m in at.main.markdown)
 
 
 def test_preview_blanks_missing_cells():
     # Same rule as the results grid: the default paints a missing cell as the
-    # literal word "None", and blank_cells.csv has one inside the first five
-    # rows this preview shows.
+    # literal word "None", and the preview shows the whole file, so every NA
+    # row of blank_cells.csv lands in it.
     at = _new_app()
     at.session_state["df"] = pd.DataFrame({"text": ["great", None]})
     at.session_state["source_name"] = "x"
@@ -173,7 +205,7 @@ def test_results_persist_from_session_state_without_reclassify():
     # Results render from stored state on a plain rerun (no Classify click),
     # so a post-classify interaction never re-runs inference.
     at = _classified_state(_new_app()).run()
-    assert any("Classification complete" in s.value for s in at.success)
+    assert _results_rendered(at)
     assert len(at.metric) == 4
 
 
@@ -209,10 +241,10 @@ def test_results_hidden_when_selected_column_changes():
     at.session_state["result_col"] = "text"
     at.session_state["result_generated_cols"] = (SENTIMENT_COL, CONFIDENCE_COL)
     at.run()
-    assert any("Classification complete" in s.value for s in at.success)
+    assert _results_rendered(at)
 
     at.selectbox[0].set_value("other").run()
-    assert not any("Classification complete" in s.value for s in at.success)
+    assert not _results_rendered(at)
 
 
 def _node_text(node):
@@ -238,7 +270,7 @@ def _node_text(node):
 
 def _top_level_index(at, text):
     """Position, among the main body's direct children, of the subtree holding
-    `text` -- both things asserted on below sit inside a container."""
+    `text` -- every label asserted on below sits inside a container."""
     for index, node in enumerate(at.main.children.values()):
         stack = [node]
         while stack:
@@ -249,33 +281,126 @@ def _top_level_index(at, text):
     return None
 
 
-def test_preview_renders_above_the_classify_button():
-    # The whole point of the st.empty slot. The preview is the "did I pick the
-    # right column" check made *before* paying for inference, but whether to
-    # draw it is settled after the classify branch runs, so it is filled out of
-    # order. Drop the slot and fill it where the decision is made and the
-    # preview renders *below* Classify -- visually wrong, and every other test
-    # here stays green.
+def _block_holding(at, text):
+    """The main-area block whose *direct* children include the node reading `text`."""
+    stack = [at.main]
+    while stack:
+        block = stack.pop()
+        children = list(getattr(block, "children", {}).values())
+        if any(_node_text(child) == text for child in children):
+            return block
+        stack.extend(children)
+    return None
+
+
+def test_inputs_live_in_the_sidebar_and_data_in_the_main_area():
+    # The layout split. Every other lookup in this file searches the whole
+    # element tree, so any of these widgets could wander back into the main
+    # area -- or the preview into the sidebar -- with the rest of the suite
+    # green. Asserted per block, and as the exact sidebar button order, which
+    # is also the order the steps are taken in.
     at = _new_app()
     at.session_state["df"] = pd.DataFrame({"text": ["great", "awful"]})
     at.session_state["source_name"] = "x"
     at.run()
-    preview = _top_level_index(at, PREVIEW_CAPTION)
-    classify = _top_level_index(at, "Classify")
-    assert preview is not None, "preview did not render without results"
-    assert classify is not None
-    assert preview < classify
+    assert len(at.sidebar.file_uploader) == 1
+    assert len(at.sidebar.selectbox) == 1
+    assert [b.key for b in at.sidebar.button] == ["sample", "classify", "reset"]
+    assert len(at.main.file_uploader) == 0
+    assert len(at.main.selectbox) == 0
+    assert len(at.main.button) == 0
+    assert _has_card(at.main, PREVIEW_LABEL)
+    assert len(at.main.dataframe) == 1
+
+
+def test_landing_page_says_where_the_inputs_went():
+    # With the uploader in the sidebar the main area is otherwise a title over
+    # empty space, and a collapsed sidebar leaves nothing on screen saying where
+    # to start. Landing page only: it would be noise beside a loaded file.
+    at = _new_app().run()
+    assert _has_card(at.main, GET_STARTED_LABEL)
+    # Content-sized: three short lines in a card stretched across the wide
+    # main area read as an empty banner.
+    assert _block_holding(at, GET_STARTED_LABEL).proto.width_config.use_content
+    # Nothing is loaded, so there is nothing to reset.
+    assert not [b for b in at.button if b.key == "reset"]
+
+    at.button(key="sample").click().run()
+    assert not _has_card(at.main, GET_STARTED_LABEL)
+
+
+def test_preview_shows_the_whole_file_with_the_selected_column_first():
+    # The picker lists headers only; the values beside a wrongly auto-detected
+    # column are what show which header actually holds the text. The selected
+    # column leads, and its header says why.
+    at = _new_app()
+    at.session_state["df"] = pd.DataFrame(
+        {"id": ["a1", "a2"], "note": ["x", "y"], "text": ["great", "awful"]}
+    )
+    at.session_state["source_name"] = "x"
+    at.run()
+    assert at.selectbox[0].value == "id"  # auto-detect: first text column
+    preview = at.main.dataframe[0]
+    assert list(preview.value.columns) == ["id", "note", "text"]
+    assert list(preview.proto.column_order) == ["id", "note", "text"]
+
+    at.selectbox[0].set_value("text").run()
+    preview = at.main.dataframe[0]
+    # Moved to the front, the rest keep their file order.
+    assert list(preview.proto.column_order) == ["text", "id", "note"]
+    # Named, since after Sample nothing else on the page says what is loaded.
+    assert any(
+        c.value.startswith("x — 2 rows, 3 columns.") and "`text`" in c.value
+        for c in at.main.caption
+    )
+    config = json.loads(preview.proto.columns)
+    assert config["text"]["help"] == "The column that will be classified."
+    # Ordered, not pinned: a pinned column is left out of the grid's spare
+    # width, which drew a single-column file as one narrow column beside an
+    # empty grid.
+    assert "pinned" not in config["text"]
+    assert "id" not in config
 
 
 def test_preview_gives_way_to_the_results_table():
-    # The results table is this same column plus the two generated ones, so
-    # leaving the preview up repeats five rows of it directly above the full
-    # frame that contains them.
+    # The results table is the whole file plus the two generated columns, so
+    # leaving the preview up would repeat the file directly below the frame
+    # that already contains it.
     at = _classified_state(_new_app()).run()
     assert not at.exception
-    assert PREVIEW_CAPTION not in [c.value for c in at.caption]
+    assert not _has_card(at.main, PREVIEW_LABEL)
     # The results grid, and only it.
     assert len(at.dataframe) == 1
+
+
+def test_chart_shares_the_metric_row_above_the_results_table():
+    # One summary band -- the metric cards and the distribution chart -- then
+    # the table. On its own full-width row the chart spent ~190px drawing two
+    # bars, and below the table it was off the bottom of the screen.
+    at = _classified_state(_new_app()).run()
+    metrics = _top_level_index(at, "Total rows")
+    chart = _top_level_index(at, "**Sentiment distribution**")
+    results = _top_level_index(at, RESULTS_LABEL)
+    assert None not in (metrics, chart, results)
+    assert metrics == chart < results
+
+
+def test_download_rides_in_the_results_header_row():
+    # Beside the thing it downloads rather than under a table that can be
+    # taller than the screen, with the source named next to the label. Every
+    # other Download lookup searches the whole tree, which stays green wherever
+    # in it the button lands.
+    at = _classified_state(_new_app()).run()
+    header = _block_holding(at, RESULTS_LABEL)
+    assert header is not None
+    assert [child.type for child in header.children.values()] == [
+        "markdown",
+        "caption",
+        "space",
+        "download_button",
+    ]
+    assert list(header.children.values())[1].value == "x"
+    assert len(at.sidebar.download_button) == 0
 
 
 def test_preview_survives_an_all_blank_result():
@@ -298,14 +423,18 @@ def test_preview_survives_an_all_blank_result():
     at.session_state["result_generated_cols"] = (SENTIMENT_COL, CONFIDENCE_COL)
     at.run()
     assert any("No classification was performed" in i.value for i in at.info)
-    assert PREVIEW_CAPTION in [c.value for c in at.caption]
+    assert _has_card(at.main, PREVIEW_LABEL)
     assert len(at.dataframe) == 1
+    # No results card on this branch, so Download renders on its own.
+    assert len(at.download_button) == 1
 
 
 def test_sample_button_says_what_it_loads():
-    # Nothing else on the landing page says what Sample does. Same class of
-    # kwarg as the selectbox help pinned above: drop it and every other test
-    # stays green while the affordance silently disappears.
+    # The label alone does not say what Sample loads, and the Get started
+    # card -- the only other place that names it -- is gone once a file is
+    # loaded. Same class of kwarg as the selectbox help pinned above: drop it
+    # and every other test stays green while the affordance silently
+    # disappears.
     at = _new_app().run()
     assert at.button(key="sample").help == (
         "Load the built-in sample CSV instead of uploading a file."
@@ -332,10 +461,10 @@ def test_preview_returns_when_the_column_change_invalidates_results():
     at.session_state["result_col"] = "text"
     at.session_state["result_generated_cols"] = (SENTIMENT_COL, CONFIDENCE_COL)
     at.run()
-    assert PREVIEW_CAPTION not in [c.value for c in at.caption]
+    assert not _has_card(at.main, PREVIEW_LABEL)
 
     at.selectbox[0].set_value("other").run()
-    assert PREVIEW_CAPTION in [c.value for c in at.caption]
+    assert _has_card(at.main, PREVIEW_LABEL)
 
 
 def test_upload_loads_dataframe_into_session_state():
@@ -383,7 +512,7 @@ def test_removing_the_uploaded_file_clears_data_and_results():
     for key in ["df", "source_name", "result_df", "result_col"]:
         assert key not in at.session_state
     assert "result_generated_cols" not in at.session_state
-    assert not any("Classification complete" in s.value for s in at.success)
+    assert not _results_rendered(at)
 
     at.run()  # and it stays cleared, rather than flapping on the next rerun
     assert "df" not in at.session_state
@@ -438,11 +567,11 @@ def test_malformed_upload_shows_error_and_clears_data():
 
 
 def test_malformed_upload_offers_reset():
-    # The third unusable-file state, and the one that needed Reset most: this
-    # arm clears df, so the `if df is not None:` block never runs and none of
-    # its _reset_button() call sites fire, while the error is deliberately
-    # sticky. Reset also bumps uploader_key, which retires the stale
-    # _uploaded_id and takes the error with it.
+    # The third unusable-file state, and the one that needed Reset most: the
+    # failed read clears df, so read_failed is the only arm of the state chain
+    # that can offer Reset, while the error is deliberately sticky. Reset also
+    # bumps uploader_key, which retires the stale _uploaded_id and takes the
+    # error with it.
     at = _new_app().run()
     at.file_uploader[0].upload("bad.csv", b"").run()
     assert any("Could not read" in e.value for e in at.error)
@@ -485,7 +614,7 @@ def test_result_survives_plain_rerun_after_upload():
 
     at.run()  # plain rerun; uploader still holds the same file
     assert "result_df" in at.session_state
-    assert any("Classification complete" in s.value for s in at.success)
+    assert _results_rendered(at)
 
 
 def test_large_result_skips_styler_without_error():
@@ -583,7 +712,10 @@ def test_wide_result_under_the_row_cap_still_renders():
     at.run()
     assert not at.exception
     assert len(at.metric) == 4
-    # The two things the abort took with it, asserted directly.
+    # What the abort takes is the grid: Download now renders in the Results
+    # header row, ahead of it, so it survives the abort (verified by reverting
+    # the cell clause: an exception, 0 dataframes, 1 download button) and its
+    # count here is corroboration, not the tripwire.
     assert len(at.dataframe) > 0
     assert len(at.download_button) == 1
 
@@ -601,7 +733,7 @@ def test_all_blank_result_shows_info_not_metrics():
     at.run()
     assert any("No classification was performed" in i.value for i in at.info)
     assert len(at.metric) == 0
-    assert not any("Classification complete" in s.value for s in at.success)
+    assert not _results_rendered(at)
 
 
 def test_collision_renames_the_model_column_and_metrics_follow_it():
@@ -683,4 +815,146 @@ def test_results_missing_the_generated_pair_degrade_instead_of_crashing():
     at.run()
     assert not at.exception
     assert len(at.metric) == 0
-    assert not any("Classification complete" in s.value for s in at.success)
+    assert not _results_rendered(at)
+
+
+def test_page_is_wide():
+    # The layout the sidebar split exists for, and the one thing no element in
+    # the tree can show: AppTest builds `at` from delta messages only, so the
+    # page_config_changed message never reaches it. Spy on the public call
+    # instead -- the script's `import streamlit as st` is this same module, so
+    # the patched attribute is the one it calls.
+    with patch("streamlit.set_page_config", wraps=streamlit.set_page_config) as spy:
+        _new_app().run()
+    spy.assert_called_once()
+    assert spy.call_args.kwargs["layout"] == "wide"
+    # Left at "auto": "expanded" differs only at 768px and below, where the
+    # sidebar overlays the page -- including the Get started card written for
+    # exactly the collapsed case.
+    assert "initial_sidebar_state" not in spy.call_args.kwargs
+
+
+def test_file_problems_are_reported_in_the_main_area():
+    # Each unusable-file arm splits its UI: the message in the main area,
+    # Reset in the sidebar. Every other alert and Reset lookup in this file
+    # searches the whole tree, so either could cross over with the suite green
+    # -- and a message in the sidebar leaves nothing on screen once the sidebar
+    # is collapsed.
+    at = _new_app().run()
+    at.file_uploader[0].upload("bad.csv", b"").run()
+    assert len(at.main.error) == 1
+    assert not at.sidebar.error
+    assert [b.key for b in at.sidebar.button] == ["sample", "reset"]
+    assert not _has_card(at.main, GET_STARTED_LABEL)
+
+    for df in [pd.DataFrame(), pd.DataFrame({"score": [1, 2, 3]})]:
+        at = _new_app()
+        at.session_state["df"] = df
+        at.session_state["source_name"] = "unusable"
+        at.run()
+        assert len(at.main.warning) == 1
+        assert not at.sidebar.warning
+        assert [b.key for b in at.sidebar.button] == ["sample", "reset"]
+
+
+def test_preview_caps_long_columns_like_the_results_table():
+    # The preview shows the whole file, so a long column that is not the
+    # selected one is on screen too. The selected column's entry is built
+    # apart from _width_caps (it also carries the help), so it is pinned both
+    # ways: capped when long, left at its natural width when short.
+    long_text = "word " * 20
+    assert len(long_text) > LONG_TEXT_CHARS
+    at = _new_app()
+    at.session_state["df"] = pd.DataFrame(
+        {"id": ["a1", "a2"], "title": [long_text] * 2, "text": [long_text] * 2}
+    )
+    at.session_state["source_name"] = "x"
+    at.run()
+    assert at.selectbox[0].value == "id"  # auto-detect: short, selected
+    config = json.loads(at.main.dataframe[0].proto.columns)
+    assert "width" not in config["id"]
+    assert config["title"]["width"] == TEXT_COL_WIDTH
+    assert config["text"]["width"] == TEXT_COL_WIDTH
+
+    at.selectbox[0].set_value("text").run()
+    config = json.loads(at.main.dataframe[0].proto.columns)
+    assert config["text"]["width"] == TEXT_COL_WIDTH  # long, selected
+    assert config["title"]["width"] == TEXT_COL_WIDTH
+    assert "id" not in config
+
+
+def _descendant_types(block):
+    """Element types of every node under `block`, depth-first."""
+    types = []
+    for child in getattr(block, "children", {}).values():
+        types.append(child.type)
+        types.extend(_descendant_types(child))
+    return types
+
+
+class _FakeModel:
+    """Stands in for the checkpoint so Classify can actually be clicked.
+
+    conftest's module-level mock returns a bare MagicMock, whose logits
+    mx.softmax rejects, which is why every other results test here hand-seeds
+    session_state. This one answers with real mx logits, so a click drives
+    the real process_dataframe against the real tokenizer.
+    """
+
+    calls = 0
+
+    def __init__(self, config):
+        self.config = config
+
+    def from_pretrained(self, *args, **kwargs):
+        pass
+
+    def parameters(self):
+        return {}
+
+    def __call__(self, input_ids, **kwargs):
+        type(self).calls += 1
+        rows = input_ids.shape[0]
+        return SimpleNamespace(
+            logits=mx.array([[0.0, 2.0] if i % 2 else [2.0, 0.0] for i in range(rows)])
+        )
+
+
+@pytest.fixture
+def fake_model():
+    # load_model is st.cache_resource'd, so whichever model class was patched
+    # in when it first ran would otherwise be served to every later test --
+    # cleared on both sides so this one cannot leak in or out.
+    _FakeModel.calls = 0
+    streamlit.cache_resource.clear()
+    with patch("mlx_transformers.models.RobertaForSequenceClassification", _FakeModel):
+        yield _FakeModel
+    streamlit.cache_resource.clear()
+
+
+def test_classify_click_announces_once_and_renders_in_the_main_area(fake_model):
+    # The only test that clicks Classify. "Classification complete!" is a toast
+    # on the run that classified, not a callout re-rendered with the results:
+    # as a callout it reappeared on every later rerun, announcing a run that
+    # had not happened. The progress bar is written where the classify branch
+    # runs -- the main area -- and must not follow the button into the sidebar.
+    at = _new_app().run()
+    at.button(key="sample").click().run()
+    at.button(key="classify").click().run()
+    assert not at.exception
+    assert fake_model.calls > 0
+    assert _results_rendered(at)
+    assert [t.value for t in at.toast] == ["Classification complete!"]
+    assert not at.success
+    # process_dataframe clears its bar with .empty() before returning, so no
+    # "progress" element survives the run anywhere -- asserting its absence
+    # from the sidebar passed with the bar drawn there. The cleared slot does
+    # survive, as an "empty" element, and that is what shows where it was.
+    assert "empty" in [child.type for child in at.main.children.values()]
+    assert "empty" not in _descendant_types(at.sidebar)
+
+    calls = fake_model.calls
+    at.run()  # a plain rerun re-renders from session_state
+    assert fake_model.calls == calls
+    assert _results_rendered(at)
+    assert not at.toast
