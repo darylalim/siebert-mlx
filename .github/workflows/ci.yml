@@ -123,10 +123,11 @@ jobs:
       # `gh release create --target` creates the tag itself and --generate-notes
       # builds the notes server-side, so a shallow checkout and no tag push are
       # enough. That tag is created with the GITHUB_TOKEN, and GitHub does not
-      # start a workflow run from a GITHUB_TOKEN event -- so release.yml does NOT
-      # also fire on it. That suppression is the only thing keeping the two
-      # release paths from double-publishing; do not swap in a PAT without
-      # removing one of them.
+      # start a workflow run from a GITHUB_TOKEN event -- so release.yml does not
+      # fire on it. That suppression is no longer what prevents a double publish,
+      # though: release.yml checks whether the release already exists and exits
+      # if so, and this call creates the release and its tag together. A PAT here
+      # would cost one no-op release.yml run, not a second release.
       - name: Publish release on version bump
         env:
           GH_TOKEN: ${{ github.token }}
