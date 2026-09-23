@@ -421,9 +421,9 @@ def _render_results(result_df, source_name, generated_cols) -> bool:
 
     # Say so when the source CSV forced a rename. Here rather than in
     # process_dataframe because results re-render from session_state on every
-    # rerun: a notice emitted during classify would vanish on the first one,
-    # including the rerun the Download click itself causes -- precisely when
-    # the user needs to know what the file's headers mean. Above the all-blank
+    # rerun: a notice emitted during classify would vanish on the first one
+    # (a manual Rerun, or the file watcher's after a code edit) -- while the
+    # user still needs to know what the file's headers mean. Above the all-blank
     # split so it shows on that branch too, whose download carries the same
     # headers. st.info, not st.warning: nothing failed and no data was lost.
     #
@@ -700,11 +700,13 @@ def _render_results(result_df, source_name, generated_cols) -> bool:
     # aggregations, the per-cell Styler over every row up to STYLE_ROW_CAP, and
     # _is_long_text's astype(str).str.len() sweep over every column, all to
     # hand over a file. The two settle different halves and do not conflict --
-    # marshall_file routes a callable to the deferred-file path, which is
-    # served on the download request itself and so still runs with no rerun to
-    # attach to. Everything else that reruns (theme toggle, any widget) still
-    # re-renders from session_state exactly as before, which is why the notice
-    # above must stay in this function rather than in process_dataframe.
+    # marshall_file routes a callable to the deferred-file path, which the
+    # click resolves with one backend round trip rather than a rerun, so it
+    # still runs with no rerun to attach to. Every rerun that does happen (a
+    # widget, a manual Rerun, the file watcher) still re-renders from
+    # session_state exactly as before, which is why the notice above must stay
+    # in this function rather than in process_dataframe. (A theme toggle is not
+    # one: it restyles the page without rerunning the script.)
     st.download_button(
         label="Download",
         data=lambda: result_df.to_csv(index=False),
@@ -885,8 +887,8 @@ if df is not None:
                 # nothing enforces.
                 st.session_state["result_generated_cols"] = generated_cols
 
-        # Render persisted results so post-classify reruns (e.g. the Download
-        # click or a theme toggle) don't collapse the view or re-run inference.
+        # Render persisted results so post-classify reruns (e.g. a manual Rerun
+        # or a widget change) don't collapse the view or re-run inference.
         # Invalidate when the selected column no longer matches what was run.
         result_df = st.session_state.get("result_df")
         if (
