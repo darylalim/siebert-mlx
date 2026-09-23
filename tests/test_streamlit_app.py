@@ -1395,7 +1395,7 @@ class TestRenderResultsGeneratedColumns:
 
 
 class TestRenderResultsRenderingKwargs:
-    """Pins the four render kwargs that have no other observable in the suite.
+    """Pins render kwargs (and one shared color) no other test would miss.
 
     Each was verified once in a browser and then had nothing holding it: drop
     any of them and every other test stays green while the app visibly

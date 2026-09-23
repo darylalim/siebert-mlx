@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Stop hook: gate the turn on ruff + ty + pytest, but only when something the
-# suite actually depends on has changed since the last time all four passed.
+# Stop hook: gate the turn on the same checks CI's `check` job runs, but
+# only when something they depend on has changed since they last all passed.
 #
 # The trigger is a content fingerprint of the verifiable tree, computed here.
 # The first version had ruff-fix.sh touch a marker file on *.py edits, which

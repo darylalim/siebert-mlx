@@ -3,14 +3,14 @@
 # Silent on success; leaves every edit ruff-clean per CLAUDE.md.
 #
 # Markdown is in scope because ruff >= 0.16 formats Python fences inside .md,
-# and CI's `ruff format --check .` covers CLAUDE.md and README.md alongside the
-# 5 .py files (7 total). `ruff check` is Python-only -- it reports "No Python
+# and CI's `ruff format --check .` covers CLAUDE.md and README.md alongside
+# every .py file. `ruff check` is Python-only -- it reports "No Python
 # files found" on .md -- so only the .py arm pays for that second subprocess.
 #
 # This hook is a formatter, not a gate: it reports nothing back and swallows
-# every failure. Whole-project verification (ruff check ., ty, pytest) lives in
-# verify-on-stop.sh, which derives its own trigger from the repo contents
-# rather than from anything this hook records.
+# every failure. Whole-project verification (the checks CI's `check` job runs,
+# not the integration job) lives in verify-on-stop.sh, which derives its own
+# trigger from the repo contents rather than from anything this hook records.
 set -euo pipefail
 
 input=$(cat)
