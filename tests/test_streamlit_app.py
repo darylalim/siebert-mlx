@@ -1,3 +1,7 @@
+import os
+import stat
+import tempfile
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import mlx.core as mx
@@ -234,6 +238,19 @@ class TestGeneratedColumns:
 # --- load_model ---
 
 
+def _save_like_safetensors(tensors, path):
+    """Stand-in for safetensors 0.8.0's save_file, as far as the file is concerned.
+
+    It writes through its own temp file and renames that over `path`, so what
+    lands is a new 0600 file whatever the umask or the mode `path` already had.
+    The bare MagicMock never touches the file, so it cannot tell a converter
+    that reapplies the mode from one that does not.
+    """
+    fd, tmp = tempfile.mkstemp(dir=Path(path).parent)
+    os.close(fd)
+    os.replace(tmp, path)
+
+
 class TestEnsureSafetensors:
     @patch("safetensors.torch.save_file")
     @patch("torch.load", return_value={"weight": "data"})
@@ -276,6 +293,57 @@ class TestEnsureSafetensors:
 
         assert not (tmp_path / "model.safetensors").exists()
         assert list(tmp_path.glob("*.tmp")) == []
+
+    @pytest.mark.parametrize("umask", [0o022, 0o077])
+    @patch("safetensors.torch.save_file", side_effect=_save_like_safetensors)
+    @patch("torch.load", return_value={"weight": "data"})
+    @patch("streamlit_app.snapshot_download")
+    def test_converted_file_honors_the_umask(
+        self, mock_download, mock_torch_load, mock_save, tmp_path, umask
+    ):
+        """The checkpoint gets the mode any plain write would, not save_file's 0600.
+
+        Two cases because each rules out a different wrong fix: 0o022 fails
+        without the chmod (0600 != 0644), and 0o077 fails with a hardcoded
+        0o644, which would widen a deliberately strict umask.
+        """
+        (tmp_path / "pytorch_model.bin").touch()
+        mock_download.return_value = str(tmp_path)
+
+        old = os.umask(umask)
+        try:
+            _ensure_safetensors("model/name", "token")
+        finally:
+            os.umask(old)
+
+        mode = stat.S_IMODE((tmp_path / "model.safetensors").stat().st_mode)
+        assert mode == 0o666 & ~umask
+        assert list(tmp_path.glob("*.tmp")) == []
+
+    @patch("torch.load", return_value={"weight": "data"})
+    @patch("streamlit_app.snapshot_download")
+    def test_failure_reading_the_temp_mode_leaves_no_temp_file(
+        self, mock_download, mock_torch_load, tmp_path
+    ):
+        """Reading the mode back is a failure path of its own; nothing sweeps a
+        leaked temp file later, since every run picks a fresh uuid name."""
+        (tmp_path / "pytorch_model.bin").touch()
+        mock_download.return_value = str(tmp_path)
+        real_stat = Path.stat
+
+        def stat_failing_on_temp_files(self, *args, **kwargs):
+            if self.name.endswith(".tmp"):
+                raise OSError("stat failed")
+            return real_stat(self, *args, **kwargs)
+
+        with (
+            patch.object(Path, "stat", stat_failing_on_temp_files),
+            pytest.raises(OSError, match="stat failed"),
+        ):
+            _ensure_safetensors("model/name", "token")
+
+        assert list(tmp_path.glob("*.tmp")) == []
+        assert not (tmp_path / "model.safetensors").exists()
 
     @patch("streamlit_app.snapshot_download")
     def test_skips_conversion_when_safetensors_exists(self, mock_download, tmp_path):

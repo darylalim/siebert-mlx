@@ -1,5 +1,6 @@
 import os
-import tempfile
+import stat
+import uuid
 from collections.abc import Collection
 from pathlib import Path
 from typing import NamedTuple, cast
@@ -122,13 +123,25 @@ def _ensure_safetensors(model_path: str, token: str | None) -> Path:
         # off each other's partial writes; whichever replaces last wins, and
         # both files were complete. The finally clears the temp file on every
         # failure path and is a no-op once replace has consumed it.
-        fd, tmp_name = tempfile.mkstemp(
-            dir=local_dir, prefix="model.safetensors.", suffix=".tmp"
-        )
-        os.close(fd)
-        tmp_path = Path(tmp_name)
+        #
+        # Created by hand with 0o666 rather than via mkstemp (always 0600): a
+        # plain create, so the kernel applies the umask, and the resulting mode
+        # is what the checkpoint should end up with -- read back from the file
+        # rather than via os.umask(), which would briefly change it for every
+        # thread in the process. O_EXCL keeps mkstemp's guarantee that the name
+        # is ours alone.
+        tmp_path = local_dir / f"model.safetensors.{uuid.uuid4().hex}.tmp"
+        os.close(os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666))
         try:
+            # Inside the try, so the finally covers it too. The create stays
+            # outside: if O_EXCL fails, the path is not ours to unlink.
+            mode = stat.S_IMODE(tmp_path.stat().st_mode)
             save_file(pt_weights, tmp_path)
+            # safetensors 0.8.0 writes through its own temp file and renames it
+            # over ours, landing 0600 whatever the umask (0.7.0 kept the mode),
+            # so reapply it -- otherwise os.replace carries an owner-only
+            # checkpoint into a Hugging Face cache that may be shared.
+            os.chmod(tmp_path, mode)
             os.replace(tmp_path, safetensors_path)
         finally:
             tmp_path.unlink(missing_ok=True)
