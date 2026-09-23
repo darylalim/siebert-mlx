@@ -76,14 +76,12 @@ def test_initial_render_has_uploader_and_sample_button():
 
 def test_landing_page_states_what_it_wants():
     # The requirements used to surface only as post-hoc rejections after the
-    # user had already chosen a file, and the 512-token truncation was
-    # invisible everywhere in the UI.
+    # user had already chosen a file. The Get started card is where the
+    # landing page says what to do -- and, since the caption under the title
+    # was removed, the only text there besides the title.
     at = _new_app().run()
-    # The truncation note is in the page caption, which renders in every
-    # state; the requirement is in the Get started card, which is where the
-    # landing page tells the user what to do.
-    assert any("512 tokens" in c.value for c in at.main.caption)
     assert any("with a text column" in m.value for m in at.main.markdown)
+    assert not at.main.caption
 
 
 def test_preview_blanks_missing_cells():
@@ -117,8 +115,12 @@ def test_selectbox_has_expected_label_and_help_text():
     at.button(key="sample").click().run()
     assert len(at.selectbox) == 1
     assert at.selectbox[0].label == "Text column"
+    # The 512-token truncation is said here, where the text is chosen: it was
+    # invisible everywhere in the UI once, and this tooltip is the only place
+    # that states it since the caption under the title was removed.
     assert at.selectbox[0].help == (
-        "Select the column containing English text for sentiment classification."
+        "Select the column containing English text for sentiment "
+        "classification. Text longer than 512 tokens is truncated."
     )
 
 
@@ -306,6 +308,8 @@ def test_inputs_live_in_the_sidebar_and_data_in_the_main_area():
     assert len(at.sidebar.file_uploader) == 1
     assert len(at.sidebar.selectbox) == 1
     assert [b.key for b in at.sidebar.button] == ["sample", "classify", "reset"]
+    # Inputs only: no model note or other text under the controls.
+    assert not at.sidebar.caption
     assert len(at.main.file_uploader) == 0
     assert len(at.main.selectbox) == 0
     assert len(at.main.button) == 0

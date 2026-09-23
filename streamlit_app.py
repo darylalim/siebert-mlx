@@ -368,16 +368,6 @@ st.set_page_config(
 )
 
 st.title("SiEBERT MLX")
-# The landing page otherwise said nothing about what the app does, and the
-# 512-token truncation was invisible everywhere in the UI. What the app *wants*
-# -- a CSV with a text column -- is said by the Get started card instead, so
-# this line stays true on every page rather than repeating "Upload a CSV" above
-# results. st.caption, not st.info: this is orienting metadata, not an
-# instruction, and the callout weight is reserved for things that happened.
-st.caption(
-    "Classify the sentiment of English text on Apple Silicon. "
-    "Text longer than 512 tokens is truncated."
-)
 
 st.session_state.setdefault("uploader_key", 0)
 
@@ -844,18 +834,9 @@ with st.sidebar:
         help="Load the built-in sample CSV instead of uploading a file.",
         on_click=_load_sample,
     )
-    # Reserved here, filled at the foot of the script. What goes in it -- the
-    # column picker and Classify/Reset, or Reset alone -- depends on the loaded
-    # file, which is only settled after load_model() and the upload handler
-    # have run. Reserving the slot keeps those controls directly under the
-    # uploader they follow from, above the model note, while the note itself
-    # still renders before the model load blocks.
-    sidebar_controls = st.container()
-    st.caption(
-        "Model: [siebert/sentiment-roberta-large-english]"
-        "(https://huggingface.co/siebert/sentiment-roberta-large-english), "
-        "run locally with MLX."
-    )
+    # The column picker and Classify/Reset (or Reset alone) join these at the
+    # foot of the script, once the loaded file's state is settled. Nothing else
+    # writes to the sidebar, so they land directly under Sample.
 
 # Below the chrome, not above it. Nothing up to this point needs the model --
 # only process_dataframe does -- but streamlit emits deltas as the script runs,
@@ -940,7 +921,7 @@ if read_failed:
         "Could not read this file. Please check it's a valid CSV.",
         icon=":material/error:",
     )
-    with sidebar_controls:
+    with st.sidebar:
         _reset_button()
 elif df is None:
     # With the uploader in the sidebar, the main area would otherwise be a
@@ -963,23 +944,29 @@ elif df.empty:
         "This CSV has no rows. Please upload a file with data.",
         icon=":material/warning:",
     )
-    with sidebar_controls:
+    with st.sidebar:
         _reset_button()
 elif (default_col := detect_text_column(df)) is None:
     st.warning(
         "No text columns detected. Please check your CSV.",
         icon=":material/warning:",
     )
-    with sidebar_controls:
+    with st.sidebar:
         _reset_button()
 else:
     columns = df.columns.tolist()
-    with sidebar_controls:
+    with st.sidebar:
         text_column = st.selectbox(
             "Text column",
             options=columns,
             index=columns.index(default_col),
-            help="Select the column containing English text for sentiment classification.",
+            # The 512-token truncation is said here, where the text is chosen:
+            # nothing else in the UI mentions it since the page caption that
+            # carried it was removed.
+            help=(
+                "Select the column containing English text for sentiment "
+                "classification. Text longer than 512 tokens is truncated."
+            ),
             # Scoped to the loaded dataset, not to its headers. Unkeyed, this
             # widget's identity is a hash of (label, options, index, ...), so
             # two files with the same header list and the same auto-detected
