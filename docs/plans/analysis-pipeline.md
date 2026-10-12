@@ -6,15 +6,23 @@ Status: **drafted 2026-10-12, not started.** Implement in a fresh session; read 
 Four phases, each merged before the next starts:
 
 0. **A slimmer CLAUDE.md (G, first), complementary light and dark themes (0A), an adaptive layout
-   (0B), pinned models with a private, offline-capable setup (0C), and delimiter detection for
-   semicolon- and tab-separated CSVs (0D).** Designed below; 0B starts with measurement spikes.
+   (0B), pinned models with a private, offline-capable setup (0C), and delimiter and encoding
+   detection for Excel-exported CSVs (0D).** Designed below; 0B starts with measurement spikes.
 1. **Emotion detection.** Designed in full below, and ready to implement. Starts with an eval
-   and a go/no-go decision on the emotion model (A). Adds large-file limits (cross-cutting E).
+   and a go/no-go decision on the emotion model (A); most of the phase ships either way (see "If
+   emotion is a no-go"). Adds large-file limits (cross-cutting E).
 2. **Topic clusters.** Outline only; see "Later phases".
 3. **LLM explanations and aspects.** Outline only; see "Later phases".
 
 Between Phases 1 and 2, **non-English detection** (cross-cutting F) and **a breakdown by a
-column of the user's file** (cross-cutting I) each ship as their own release.
+column of the user's file** (cross-cutting I) each ship as their own minor release, in an order
+decided after Phase 1; each takes the next minor version when it ships.
+
+Also:
+
+- **Every phase that adds a model** adds its row to the README's license table in the commit that
+  first loads it, and stops for the user on a restrictive license (cross-cutting J).
+- **Not scheduled:** an Excel (`.xlsx`) download, only if users ask (cross-cutting H).
 
 ---
 
@@ -262,6 +270,10 @@ sidebar open.
 
 - **L1. `scripts/layout_matrix.py`**, a manual tool like `docs/capture_screenshot.py`
   (`uv run --with playwright`, system Chrome, headless).
+  - **It needs its own `# ty: ignore[unresolved-import]`** on the Playwright import, for the same
+    reason as the capture script: Playwright is deliberately not a project dependency, so `ty`
+    can't resolve it. CLAUDE.md calls the capture script's ignore "the only `ty: ignore` in the
+    repo"; update that sentence in the same commit.
   - **Viewports:** 360×780, 390×844, 768×1024, 900×700 (half-screen), 1100×800, 1512×982,
     1728×1117, 1920×1080, 2560×1440, 3440×1440.
   - **Sidebar:** open and collapsed (≥ 768).
@@ -427,7 +439,7 @@ across two.
 - **Commits:** P1 `feat: pin model revisions` (with the CI key), P2 `feat: private by default`,
   P3 `feat: offline mode` (the cold-cache error), then docs. The bump comes after 0D.
 
-## Phase 0D: detect the CSV delimiter (added 2026-10-12)
+## Phase 0D: detect the CSV delimiter and encoding (added 2026-10-12)
 
 A correctness fix, not a new input type. The app stays CSV-only; Excel and other formats were
 considered and not added.
@@ -446,6 +458,12 @@ reads as one column named `id;text`, and the comma inside the review splits the 
 that gets classified holds `" works well"`. No error, no warning: auto-detect picks the column,
 Classify succeeds and the download looks normal. Same class of bug as the column collisions:
 silent, plausible, wrong. `except ValueError` can't catch it, because nothing fails to parse.
+
+**The encoding fails the other way: loudly, with the wrong message** (checked 2026-10-12). Excel
+on Windows saves its default "CSV (Comma delimited)" format in **Windows-1252**, not UTF-8. One
+accented character (`Café`) makes `pd.read_csv` raise `UnicodeDecodeError`, and the app shows
+"Could not read this file. Please check it's a valid CSV." The file *is* a valid CSV. It's the
+same Excel-user path as the semicolons, so both are fixed here.
 
 ### Spike: the obvious fixes are worse (2026-10-12)
 
@@ -468,15 +486,33 @@ silent, plausible, wrong. `except ValueError` can't catch it, because nothing fa
   parse it with `csv.reader` once per candidate (`,`, `;`, tab) and return the one giving the
   most fields. Ties go to `,`, so a single-column file and every current file keep today's
   behaviour exactly. Quoting is respected, so a quoted header containing `;` doesn't count.
-- **Reading the head:** `uploaded_file.read(65536)`, then `seek(0)` before `pd.read_csv`.
-  Not `getvalue()`, which copies the whole upload (up to 200 MB). Decode with
-  `encoding="utf-8-sig", errors="replace"`: the BOM that Excel's "CSV UTF-8" writes must not
-  become part of the first header, and a multi-byte character cut at the 64 KB boundary must not
-  raise.
+- **Reading the head:** `raw = uploaded_file.read(65536)`, then `seek(0)` before `pd.read_csv`.
+  Not `getvalue()`, which copies the whole upload (up to 200 MB). Keep `raw` as **bytes**: the
+  encoding and BOM checks below need the bytes as they are, because decoding with `utf-8-sig`
+  removes the BOM. Only the delimiter check gets decoded text.
+- **`_detect_encoding(raw: bytes) -> str`**, also pure, returns one of three values:
+  - `"utf-8-sig"` if `raw` starts with the BOM `b"\xef\xbb\xbf"`;
+  - `"utf-8"` if `raw` decodes as UTF-8. Use an incremental decoder,
+    `codecs.getincrementaldecoder("utf-8")().decode(raw, final=...)`, with **`final=True` when
+    the read returned the whole file** (`len(raw) < 65536`) and `final=False` only when it was
+    cut off. `final=False` accepts a multi-byte character cut at the boundary, but it also
+    accepts *any* trailing byte that could start one: checked 2026-10-12, a cp1252 file ending in
+    `Café` decodes as UTF-8 `"Caf"` with `final=False`. With `final=True` it's rejected;
+  - `"cp1252"` otherwise.
+  - Then decode `raw` with the detected encoding (`errors="replace"`) and pass that text to
+    `_detect_delimiter`. Pass `encoding=` to `pd.read_csv` as well as `sep=`.
+  - **Known limits:** a file that is valid UTF-8 for its first 64 KB and cp1252 after that still
+    fails, with today's error, and so does a cp1252 file larger than 64 KB whose cut lands just
+    after an accented byte. So does a cp1252 file containing one of its five undefined bytes.
+    All are rare in Excel output, so document them rather than scanning the whole file.
+  - **Check what Excel for Mac's plain "CSV" format writes**, as part of the Excel check below.
+    If it's Mac Roman, decide then whether to add it: it can't be told apart from cp1252 by the
+    bytes alone, so it would need a different rule, not a fourth candidate.
 - **Keep the `try` to one statement.** CLAUDE.md's failed-read bullet requires the `try` around
   `pd.read_csv` to hold exactly that call, so a second statement's `ValueError` can't be shown as
-  a malformed CSV. Detect the delimiter **before** the `try`, and make `_detect_delimiter` unable
-  to raise; a test feeds it garbage bytes and an empty file.
+  a malformed CSV. `UnicodeDecodeError` is a `ValueError`, which is exactly why decoding must not
+  move inside the `try`. Detect the encoding and the delimiter **before** the `try`, and make both
+  functions unable to raise; a test feeds them garbage bytes and an empty file.
 - **`Sample`** keeps a plain `pd.read_csv`, since its file is known to use commas.
 - **Known limit:** a header that is a quoted field spanning several lines is misread. No real
   export produces one; document it, don't handle it.
@@ -501,24 +537,32 @@ silent, plausible, wrong. `except ValueError` can't catch it, because nothing fa
     generated column is touched. Revisit only if a user reports it.
   - **Rejected: always write commas.** No new state, but the download would open as one column in
     the same Excel that produced the input, which turns a fixed reading bug into a writing bug.
-- **The byte-order mark (BOM): check first, then mirror it like the delimiter (added
-  2026-10-12).**
-  - **Today's behaviour (checked 2026-10-12):** `pd.read_csv` strips a UTF-8 BOM on read, and
-    `to_csv` writes none. So a file from Excel's "CSV UTF-8" export loses its BOM in the download.
-  - **Why it might matter:** Excel has historically needed the BOM to open a CSV as UTF-8;
-    without it, non-ASCII text (accents, emoji, curly quotes) comes out garbled. Whether current
-    Excel for Mac and Windows still behave this way is **not verified**.
-  - **Check first:** open a non-ASCII CSV in Excel with and without a BOM, on whatever Excel is
-    available, and record the result. None of the samples exercise this: only `blank_cells.csv`
-    has non-ASCII bytes (3), and no sample has a BOM, so build the test file by hand.
-  - **If Excel garbles the BOM-less file:** detect the BOM from the first bytes already read for
-    `_detect_delimiter` (`head.startswith(b"\xef\xbb\xbf")`), store it with the loaded data as
-    `source_bom`, handled exactly like `source_sep` (`_load_sample` sets `False`, `_clear_data()`
-    pops it, `.get("source_bom", False)` for older sessions), and write it back by encoding the
-    download as `utf-8-sig`. Files without a BOM stay byte-identical to today, so nothing changes
-    for pandas, scripts or any non-Excel user.
-  - **If Excel opens both correctly:** do nothing, and record the result in the decisions file so
-    the question isn't reopened.
+- **The download uses the input's encoding too, with one check first (added 2026-10-12).**
+  - **State:** the detected encoding is stored as `source_encoding`, handled exactly like
+    `source_sep`: the upload handler writes it, `_load_sample` sets `"utf-8"`, `_clear_data()`
+    pops it, and older sessions read `.get("source_encoding", "utf-8")`. One key covers the BOM
+    as well, since a BOM file is just `"utf-8-sig"`. `_download_button` passes `encoding=` to
+    `to_csv`, as do B's filtered download, D's summary and I's breakdown export.
+  - **cp1252 is written back as cp1252, no check needed.** A Windows Excel user's file must
+    reopen in the same Excel, and writing it as UTF-8 would garble the very characters that
+    were just read correctly. The generated columns are ASCII, so they always encode.
+  - **The BOM: check before mirroring it.**
+    - **Today's behaviour (checked 2026-10-12):** `pd.read_csv` strips a UTF-8 BOM on read, and
+      `to_csv` writes none. So a file from Excel's "CSV UTF-8" export loses its BOM in the
+      download.
+    - **Why it might matter:** Excel has historically needed the BOM to open a CSV as UTF-8;
+      without it, non-ASCII text (accents, emoji, curly quotes) comes out garbled. Whether
+      current Excel for Mac and Windows still behave this way is **not verified**.
+    - **Check first:** open a non-ASCII CSV in Excel with and without a BOM, on whatever Excel
+      is available, and record the result. None of the samples exercise this: only
+      `blank_cells.csv` has non-ASCII bytes (3), and no sample has a BOM, so build the test file
+      by hand.
+    - **If Excel garbles the BOM-less file:** write `"utf-8-sig"` back as detected. Files without
+      a BOM stay byte-identical to today, so nothing changes for pandas, scripts or any
+      non-Excel user.
+    - **If Excel opens both correctly:** write `"utf-8"` for both UTF-8 cases (reading still
+      detects the BOM, so it never reaches a header), and record the result in the decisions
+      file so the question isn't reopened.
 
 ### Tests
 
@@ -533,15 +577,23 @@ silent, plausible, wrong. `except ValueError` can't catch it, because nothing fa
   removing the file and after a failed read; a hand-seeded session with `df` but no `source_sep`
   downloads with commas instead of raising. **Mutation-test** by dropping `sep=` from the
   download: the semicolon test must fail.
-- **BOM (only if the check says to mirror it):** a BOM upload downloads starting with
-  `\xef\xbb\xbf` and a BOM-less upload without it; Sample has none; `source_bom` is cleared on the
-  same three paths as `source_sep`. **Mutation-test** by always writing `utf-8`: the BOM test must
-  fail.
+- **Unit (`TestDetectEncoding`):** a BOM file gives `utf-8-sig`; plain UTF-8 and pure ASCII give
+  `utf-8`; a cp1252 `Café` gives `cp1252`, **including when `é` is the file's last byte** (the
+  `final=False` trap); a UTF-8 multi-byte character cut at the 64 KB boundary still gives
+  `utf-8`; an empty file gives `utf-8`; nothing raises. **Mutation-test** by always passing
+  `final=False`: the last-byte test must fail.
+- **Flow (encoding):** uploading a cp1252 file with `Café` shows the preview with the text intact,
+  not the read error. **Mutation-test** by hardcoding `utf-8`: this test must fail.
+- **Download encoding:** a cp1252 upload downloads as cp1252 (`Café` round-trips byte for byte);
+  UTF-8 uploads and Sample are byte-identical to today; `source_encoding` is cleared on the same
+  three paths as `source_sep`. **If the check says to mirror the BOM:** a BOM upload downloads
+  starting with `\xef\xbb\xbf`, and a BOM-less one without it. **Mutation-test** by always writing
+  `utf-8`: the cp1252 test must fail.
 
 ### Commit
 
-- `fix: detect semicolon- and tab-delimited CSVs`, with its tests and a CLAUDE.md rule (detection
-  details go in the matching `docs/decisions/` file, per G).
+- `fix: detect the delimiter and encoding of uploaded CSVs`, with its tests and a CLAUDE.md rule
+  (detection details go in the matching `docs/decisions/` file, per G).
 - Independent of 0A–0C, so it can land at any point in Phase 0. As a fix for silently wrong
   results, it's worth landing early.
 
@@ -675,7 +727,7 @@ Order matters. Land the refactor **first, with the existing suite unchanged and 
 
 0. `chore: add scripts/benchmark.py` (C) and record the SiEBERT-only baseline **before anything else changes**.
 1. `refactor: extract _load_classifier, _valid_sorted, _classify_texts`: no behaviour change; the existing suite passes unmodified.
-2. `feat: add the labeled eval set and scripts/eval_quality.py` (A) + `EMOTION_MODEL` with its pinned SHA (0C, P1), **then the go/no-go decision**. Lands in three steps the user gates: the labeling guide is agreed, then the user reviews every drafted label, then the κ re-label. Then run the eval and apply A's go/no-go rule. **On a no-go, stop here and bring the numbers to the user;** commits 3–11 assume a go.
+2. `feat: add the labeled eval set and scripts/eval_quality.py` (A) + `EMOTION_MODEL` with its pinned SHA (0C, P1), **then the go/no-go decision**. Lands in three steps the user gates: the labeling guide is agreed, then the user reviews every drafted label, then the κ re-label. Then run the eval and apply A's go/no-go rule. **On a no-go, stop here and bring the numbers to the user;** what happens to commits 3–11 then is set out in "If emotion is a no-go" below.
 3. `perf: fetch pytorch_model.bin only when no converted safetensors exists` (S1) + tests. Before the emotion model is loaded by the app, so both checkpoints benefit. Record the disk saved.
 4. `feat: load the emotion model and add add_emotions` + unit tests.
 5. `feat(ui): render emotion columns and distribution` + state, guard, flow tests.
@@ -685,6 +737,30 @@ Order matters. Land the refactor **first, with the existing suite unchanged and 
 9. `test: pin the eval counts against the real checkpoints` (A's gate), from CI as well as locally.
 10. `docs: emotion detection; large-file limits; disk usage (S2, S5); re-measure grid geometry; recapture screenshot; record eval, benchmark and per-tab memory numbers (S3)`, within G's budget.
 11. `chore: bump version to 0.9.0` + the repo description and topics below, **in the same commit**, so no copy advertises emotion detection before it's on `main`.
+
+### If emotion is a no-go (added 2026-10-12)
+
+The commit order above is for convenience, not dependency: most of Phase 1 doesn't need emotion.
+A no-go must not silently cancel it.
+
+| Commit | Needs emotion? | On a no-go |
+|---|---|---|
+| 0, 1 | No | Already landed |
+| 2 | Partly | Keep the eval set, the script and the sentiment numbers (and calibration); they stand on their own. Remove `EMOTION_MODEL` and its README license row (J). The `gold_emotion` column stays in the file as data |
+| 3 (S1) | No | Ships, for SiEBERT alone |
+| 4, 5 | Yes | Dropped |
+| 6 (E) | No | Ships; the run-wide bar has one pass, and the limits are set against SiEBERT alone |
+| 7 (B) | No | Ships with the sentiment filter only |
+| 8 (D) | No | Ships with the sentiment dimension only |
+| 9 (A's gate) | No | Ships, pinning SiEBERT's count only |
+| 10 | No | Docs for what shipped |
+| 11 | No | Bumps to 0.9.0; the repo description and topics stay as they are, since nothing new is advertised |
+
+- **This is the default only if the user chooses to drop emotion.** If they pick another option
+  from A's no-go list instead (the RoBERTa-large model, a smaller label set), commit 2 is re-run
+  with that and the go/no-go applies again before commit 3.
+- **What depends on this phase still works:** I (the breakdown) loses only its most-common-emotion
+  column; F and the later phases need nothing from emotion.
 
 ### Repo description and topics (at release)
 
@@ -854,8 +930,9 @@ Each lands in phase 1 for sentiment + emotion and is extended by phase 2 for top
       than 10 rows are printed and marked `low support`, as per-class F1 is; don't merge or move
       bands after seeing the numbers to make them look fuller.
     - **No go/no-go attached:** it informs later decisions, it doesn't gate emotion.
-- **Record the numbers** in CLAUDE.md, with the date and the versions used: the point estimate
-  *and* the interval, per-class support, the calibration table, and κ.
+- **Record the numbers** in the matching `docs/decisions/` file (per G), with the date and the
+  versions used: the point estimate *and* the interval, per-class support, the calibration table,
+  and κ. CLAUDE.md gets only the rule that uses them (e.g. the go/no-go outcome) and a link.
 - **Go/no-go for emotion (agreed 2026-10-12, before any row was labeled).** Phase 1 runs the eval
   in commit 2, **before** building anything on the emotion model, because its 66% was measured out
   of domain and "always on" was decided before any measurement. Emotion ships only if **both**
@@ -924,7 +1001,8 @@ Each lands in phase 1 for sentiment + emotion and is extended by phase 2 for top
     `<source>_filtered.csv`, so the file stays honest after it's forwarded.
   - **Content:** the same column order as the full download, and the same lazy `data=` callable
     over the **unstyled** filtered frame, with `on_click="ignore"` and its own key
-    (`download_filtered`).
+    (`download_filtered`). It writes with the input's delimiter and encoding (`source_sep`,
+    `source_encoding`, 0D), like the full download.
   - **Pin with tests:** it's absent with no filter; it's absent when a filter selects every value;
     its row count matches the label; the full Download's content is unchanged while a filter is on.
   - **Check:** whether `st.dataframe`'s own toolbar already exports the frame it's given, and so
@@ -946,7 +1024,8 @@ Each lands in phase 1 for sentiment + emotion and is extended by phase 2 for top
 - **Baseline first:** record the SiEBERT-only number **before** phase 1's first commit.
 - **Budgets:** emotion adds ≤ 15% to the baseline; phase 2 adds ≤ 25% on top of phase 1.
   - Phase 3 is opt-in and excluded from the total, but record its seconds per row.
-- Record results in CLAUDE.md, with the machine (M2 Max, 32 GB) and the date.
+- Record results in the matching `docs/decisions/` file (per G), with the machine (M2 Max,
+  32 GB) and the date. CLAUDE.md keeps only the budgets themselves and a link.
 
 ### D. Summary export
 
@@ -958,8 +1037,10 @@ Each lands in phase 1 for sentiment + emotion and is extended by phase 2 for top
   - Use the resolved column names as `dimension`.
 - **Mechanics:** an `st.download_button` inside the Results header's `Exports` popover (Phase 0B,
   rule 3), with the same lazy `data=` callable and `on_click="ignore"`, and its own key (e.g.
-  `download_summary`). Name the file `<source>_summary.csv`. This commit (8) is where the popover
-  first appears; until then the header holds `Download` alone.
+  `download_summary`). Name the file `<source>_summary.csv`, written with the input's delimiter
+  and encoding (`source_sep`, `source_encoding`, 0D), so it opens in the same Excel as the row
+  file. This commit (8) is where the popover first appears; until then the header holds
+  `Download` alone.
 - **Skipped rows, and what `share` divides by:** use the metric cards' rule, so the export can't
   repeat the problem the `Skipped` card fixed (shares falling short of 100% with nothing explaining
   the gap).
@@ -1029,11 +1110,30 @@ Each lands in phase 1 for sentiment + emotion and is extended by phase 2 for top
   **Spike:** confirm a sidebar click mid-run stops within one batch, and that no `result_*` key is
   half-written (they're written together after the loop, so it should hold). If both hold, document
   it and add no button. If they don't, `_clear_results()` before the run starts.
+- **Two tabs classifying at once (spike, added 2026-10-12).** The models are one object per
+  server process (`st.cache_resource`), shared by every tab, so two tabs clicking Classify
+  together run forward passes on the same MLX model from two threads. Nothing establishes that
+  this is safe, and E makes it likelier: long runs overlap, and 0C's opt-in LAN access adds more
+  users.
+  - **Spike:** run two `_classify_texts` calls on separate threads against the real models, many
+    times, with different texts. Check for crashes, and compare each thread's output bitwise
+    with a single-threaded run of the same texts. Do it on mlx as locked, and note that the
+    thread-local stream rule (`mx.eval` in the loader) is a related but different question.
+  - **If it's safe:** document it in the decisions file, with the mlx version, and add nothing.
+  - **If not:** a `threading.Lock` returned by an `@st.cache_resource` function, around each pass.
+    **Not a module-level global:** Streamlit re-executes the script on every rerun, so a global
+    in `streamlit_app.py` would be a new lock each time and protect nothing. While blocked, the
+    progress text says "Waiting for another run to finish…". A Stop or widget click while
+    waiting must still cancel cleanly, so acquire with a timeout in a loop that calls an `st`
+    function between attempts. Pin with a flow-level test using two threads and the fake model.
+  - Phase 2's embedder and Phase 3's LLM inherit whichever answer this gives; re-check it when
+    each lands, since a different model class may behave differently.
 - **Tests:** the ETA text (fake clock), the warning-and-disabled-Classify arm above `MAX_ROWS`
   (hand-seeded frame, no real classify), the caption appearing only above `WARN_ROWS`, the
   pre-slice parity test.
-- **Docs:** CLAUDE.md records the measured `WARN_ROWS` / `MAX_ROWS` and how they were set; the
-  README states the limit.
+- **Docs:** CLAUDE.md states the rule (what `WARN_ROWS` / `MAX_ROWS` guard and which tests pin
+  them); the measurements and how the values were set go in the matching `docs/decisions/` file
+  (per G); the README states the limit.
 
 ### F. Non-English input (its own release between Phase 1 and Phase 2)
 
@@ -1091,8 +1191,9 @@ Each lands in phase 1 for sentiment + emotion and is extended by phase 2 for top
   the flow tests and the spike. Hand-written, and kept apart from `labeled_eval.csv` (A).
 - **Cost:** another full pass (12 layers, base size): benchmark it (C) and give it its own budget
   (≤ +20% over Phase 1). Disk +1.11 GB (fp32 on disk), memory ~0.56 GB in fp16.
-- **Release:** its own minor version after Phase 1's 0.9.0 (0.10.0), with the README feature list
-  and the description left unchanged (it's a guard, not a headline feature).
+- **Release:** its own minor version after Phase 1's 0.9.0: the next free minor when it ships,
+  since I may land first. The README feature list and the description stay unchanged (it's a
+  guard, not a headline feature).
 
 ### G. A size budget for CLAUDE.md (first step of Phase 0)
 
@@ -1193,8 +1294,8 @@ format with a real case, so it isn't re-derived from scratch.
 - **Filters (B):** the breakdown follows the metric cards and stays **whole-file**; only the
   results table filters. Same reason as B: the summary describes the run.
 - **Export:** a `Breakdown` entry in the `Exports` popover (0B rule 3), only while a column is
-  chosen, named `<source>_by_<column>.csv`, using the input's delimiter (0D). Same lazy `data=`
-  and `on_click="ignore"`.
+  chosen, named `<source>_by_<column>.csv`, using the input's delimiter and encoding (0D). Same
+  lazy `data=` and `on_click="ignore"`.
 - **Tests:** qualifying-column rules (an id column, a text column, a constant column and a
   generated column are all absent from the options); the `rows` sum; the `(blank)` row; worst
   first; key reset on a new file and on re-classify; the export's content matches the card.
