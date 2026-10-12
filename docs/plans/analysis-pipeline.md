@@ -13,7 +13,8 @@ Four phases, each merged before the next starts:
 2. **Topic clusters.** Outline only; see "Later phases".
 3. **LLM explanations and aspects.** Outline only; see "Later phases".
 
-Between Phases 1 and 2, **non-English detection** (cross-cutting F) ships as its own release.
+Between Phases 1 and 2, **non-English detection** (cross-cutting F) and **a breakdown by a
+column of the user's file** (cross-cutting I) each ship as their own release.
 
 ---
 
@@ -751,7 +752,8 @@ the previous one has merged.
 - **Not part of Classify.** A separate sidebar button, e.g. "Explain flagged rows", runs it after
   results exist. The core run stays fast, and its tests stay deterministic.
 - **Which rows:** only rows flagged by the earlier stages:
-  - low SiEBERT confidence (e.g. < 0.9);
+  - low SiEBERT confidence, below a threshold **taken from A's calibration table** (the band
+    where accuracy drops), not a guessed `0.9`;
   - sentiment/emotion disagreements (`negative` + `joy` often means sarcasm);
   - optionally, rows the user selects in the table (`st.dataframe` selection).
   - **Cap the count** (e.g. 50), and show what was skipped.
@@ -836,9 +838,22 @@ Each lands in phase 1 for sentiment + emotion and is extended by phase 2 for top
     well-supported ones only, so one rare class (likely `disgust` or `fear` in reviews) can't
     swing the headline unseen;
   - a confusion matrix, and the count of `ambiguous` rows per column;
-  - for sentiment, the same metrics **per domain**, since the card's 93% hides domain spread.
+  - for sentiment, the same metrics **per domain**, since the card's 93% hides domain spread;
+  - **calibration (added 2026-10-12): accuracy by confidence band**, per model, over the scored
+    rows. Bands `[0.5, 0.8)`, `[0.8, 0.95)`, `[0.95, 1.0]` for SiEBERT (a binary softmax maximum
+    never goes below 0.5); for emotion, whose 7-class maximum can go down to ~0.14, add a
+    `[lowest, 0.5)` band. Each band prints its row count, its accuracy with a bootstrap interval,
+    and its mean confidence, so the gap between "how sure" and "how right" is visible.
+    - **Why:** confidence is on screen in every row, but nothing says what it means. This table is
+      the evidence for three later decisions: whether a "needs review" count would be honest (not
+      planned until this exists), which threshold Phase 3 uses to pick low-confidence rows, and
+      whether the Confidence column's `help=` can say anything stronger than "the model's score".
+    - **Few rows per band is expected:** SiEBERT will put most rows above 0.95. Bands with fewer
+      than 10 rows are printed and marked `low support`, as per-class F1 is; don't merge or move
+      bands after seeing the numbers to make them look fuller.
+    - **No go/no-go attached:** it informs later decisions, it doesn't gate emotion.
 - **Record the numbers** in CLAUDE.md, with the date and the versions used: the point estimate
-  *and* the interval, per-class support, and κ.
+  *and* the interval, per-class support, the calibration table, and κ.
 - **Go/no-go for emotion (agreed 2026-10-12, before any row was labeled).** Phase 1 runs the eval
   in commit 2, **before** building anything on the emotion model, because its 66% was measured out
   of domain and "always on" was decided before any measurement. Emotion ships only if **both**
@@ -1142,6 +1157,52 @@ format with a real case, so it isn't re-derived from scratch.
 - **Tests, if built:** the workbook reads back with `pd.read_excel` equal to the CSV download's
   frame; the confidence cells are numeric, not strings; the entry is absent in the all-blank arm,
   like D; the over-long-cell rule.
+
+### I. Breakdown by a column of the user's file (after Phase 1; added 2026-10-12)
+
+- **Why:** every planned phase analyzes the text column, and the rest of the file is ignored.
+  Real CSVs usually carry columns like `product`, `store`, `app_version` or `category`, and the
+  most common follow-up to "how negative is it?" is "**which** product?". This answers it with
+  no model, no inference cost and no pinned-column width.
+- **When:** its own minor release after Phase 1 (0.9.0), because it reuses B's scoped widget
+  keys and D's counting helper, and includes emotion. Its order relative to F is decided then.
+  Phase 2 adds topic as one more dimension.
+- **UI:**
+  - **Sidebar:** a `Breakdown by` selectbox below the filters (B), defaulting to **None**, so a
+    file with no useful column shows nothing new. Below Classify/Reset, per 0B rule 5.
+  - **Main area:** when a column is chosen, a bordered `**Breakdown by <column>**` card between
+    the summary band and the Results card: an `st.dataframe` with one row per value and columns
+    `rows`, `positive`, `negative` (as shares, `ProgressColumn`s like Confidence), plus the most
+    common emotion. Sorted by share negative, worst first, with `rows` beside it so a 2-row
+    value at 100% negative reads as what it is.
+- **Which columns qualify:** source columns (never the generated ones, never the text column)
+  with **2 to 50 distinct non-blank values**. That excludes ids, free text and constant columns
+  without asking the user. The 50 is a starting guess: check it against real exports at
+  implementation and record the reason for the final number.
+- **Counting rules (shared with D and the metric cards):**
+  - One helper computes the counts for the metric cards, D's summary export and this card, so
+    they can never disagree. Pin it: a breakdown's `rows` sum to the file's row count.
+  - Blank cells in the chosen column form their own `(blank)` value row, and skipped text rows
+    appear as in D, so nothing silently falls out of the totals.
+  - Shares divide by the value's total rows, the same denominator rule as the metric cards.
+- **State:** re-rendering from `session_state`, never re-running inference (pin with
+  `_FakeModel.calls`). The selectbox key is scoped to the dataset **and** the run, like B's
+  filters (`result_run`), so a choice made on one file or run doesn't carry over.
+- **Filters (B):** the breakdown follows the metric cards and stays **whole-file**; only the
+  results table filters. Same reason as B: the summary describes the run.
+- **Export:** a `Breakdown` entry in the `Exports` popover (0B rule 3), only while a column is
+  chosen, named `<source>_by_<column>.csv`, using the input's delimiter (0D). Same lazy `data=`
+  and `on_click="ignore"`.
+- **Tests:** qualifying-column rules (an id column, a text column, a constant column and a
+  generated column are all absent from the options); the `rows` sum; the `(blank)` row; worst
+  first; key reset on a new file and on re-classify; the export's content matches the card.
+- **Geometry:** add a results state with a breakdown chosen to L1's matrix (0B), and check
+  rule 2 (no page-level horizontal scroll) at 320 px.
+- **Later extension, not committed: trend over time.** When the file has a date column, plot
+  share negative per week or month. Kept out of the first release because date parsing is where
+  the fragility is: formats, `dayfirst`, time zones, and Excel's serial numbers. Design it only
+  after the breakdown has shipped and only if asked for, starting with a spike over real
+  exports' date formats.
 
 ## Storage (agreed 2026-10-12)
 
