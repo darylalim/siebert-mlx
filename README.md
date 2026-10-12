@@ -5,7 +5,7 @@
 [![License: MIT](https://img.shields.io/github/license/darylalim/siebert-mlx)](LICENSE)
 ![Python](https://img.shields.io/badge/python-3.12%2B-blue)
 
-Streamlit application for sentiment classification in English text using [SiEBERT](https://huggingface.co/siebert/sentiment-roberta-large-english) on Apple Silicon with MLX.
+Classify the sentiment of English text in CSV files, locally on Apple Silicon. A Streamlit app running [SiEBERT](https://huggingface.co/siebert/sentiment-roberta-large-english) (RoBERTa-large) with MLX that adds sentiment and confidence columns to your data.
 
 ![SiEBERT MLX classifying sample data in dark mode](docs/screenshot-dark.png)
 

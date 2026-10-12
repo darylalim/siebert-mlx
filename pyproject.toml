@@ -1,7 +1,7 @@
 [project]
 name = "siebert-mlx"
 version = "0.7.1"
-description = "Streamlit application for sentiment classification in English text using SiEBERT on Apple Silicon with MLX."
+description = "Classify the sentiment of English text in CSV files, locally on Apple Silicon. A Streamlit app running SiEBERT (RoBERTa-large) with MLX that adds sentiment and confidence columns to your data."
 license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.12"
