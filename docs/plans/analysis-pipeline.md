@@ -6,8 +6,8 @@ Status: **drafted 2026-10-12, not started.** Implement in a fresh session; read 
 Four phases, each merged before the next starts:
 
 0. **A slimmer CLAUDE.md (G, first), complementary light and dark themes (0A), an adaptive layout
-   (0B), and pinned models with a private, offline-capable setup (0C).** Designed below; 0B starts
-   with measurement spikes.
+   (0B), pinned models with a private, offline-capable setup (0C), and delimiter detection for
+   semicolon- and tab-separated CSVs (0D).** Designed below; 0B starts with measurement spikes.
 1. **Emotion detection.** Designed in full below, and ready to implement. Starts with an eval
    and a go/no-go decision on the emotion model (A). Adds large-file limits (cross-cutting E).
 2. **Topic clusters.** Outline only; see "Later phases".
@@ -162,13 +162,13 @@ Ripples to handle in the same commit:
 - **Screenshot:** optionally add a light capture (`color_scheme="light"` in
   `docs/capture_screenshot.py`). CLAUDE.md records that a light shot was deliberately dropped on
   2026-08-15, so this is a choice to revisit, not an omission to fix.
-- **Version:** Phase 0 (themes, the adaptive layout **and** 0C below) ships together as **0.8.0**.
+- **Version:** Phase 0 (themes, the adaptive layout, 0C **and** 0D below) ships together as **0.8.0**.
   Phase 1 then becomes **0.9.0**; the commit-11 wording below is updated to match.
 - **Commits:**
   - T1: `feat(ui): add a light theme that mirrors the dark one`. Covers the config, `POSITIVE_COLOR`
     and the tint literal, `test_theme.py`, and the measured comments.
   - T2: `docs: document the paired themes`.
-  - The version bump moves to the end of Phase 0C (P4).
+  - The version bump moves to the end of Phase 0, after 0D.
 
 ## Phase 0B: a layout that adapts to different displays (designed 2026-10-12)
 
@@ -302,7 +302,7 @@ sidebar open.
 - **L5. Docs and release:**
   - CLAUDE.md: replace the geometry and overflow numbers with L1's matrix, add the display tiers
     and the five rules, and update the phone note in the layout bullet.
-  - The `chore: bump version to 0.8.0` for all of Phase 0 comes after 0C (P4).
+  - The `chore: bump version to 0.8.0` for all of Phase 0 comes after 0D.
 
 ### What stays as it is
 
@@ -420,9 +420,91 @@ across two.
 - CLAUDE.md: the `load_model` architecture item (revisions), the CI cache-key note (it's derived
   now), a new privacy bullet (the two config keys and why), and the pin-update procedure.
 - README: offline use, the privacy sentence, and how to open it from a phone.
-- `chore: bump version to 0.8.0` for all of Phase 0.
+- `chore: bump version to 0.8.0` for all of Phase 0, after 0D.
 - **Commits:** P1 `feat: pin model revisions` (with the CI key), P2 `feat: private by default`,
-  P3 `feat: offline mode` (the cold-cache error), then docs and the bump.
+  P3 `feat: offline mode` (the cold-cache error), then docs. The bump comes after 0D.
+
+## Phase 0D: detect the CSV delimiter (added 2026-10-12)
+
+A correctness fix, not a new input type. The app stays CSV-only; Excel and other formats were
+considered and not added.
+
+### Why
+
+`pd.read_csv(uploaded_file)` assumes commas. Many European Excel installs export CSV with
+**semicolons**, and such a file parses **silently into the wrong shape** (checked 2026-10-12):
+
+```
+id;text
+1;Great product, works well
+```
+
+reads as one column named `id;text`, and the comma inside the review splits the row, so the cell
+that gets classified holds `" works well"`. No error, no warning: auto-detect picks the column,
+Classify succeeds and the download looks normal. Same class of bug as the column collisions:
+silent, plausible, wrong. `except ValueError` can't catch it, because nothing fails to parse.
+
+### Spike: the obvious fixes are worse (2026-10-12)
+
+| Input | `csv.Sniffer` | pandas `sep=None, engine="python"` | Header-line rule (below) |
+|---|---|---|---|
+| `id;text`, comma inside text | `;` | `id, text` | `;` |
+| `id<TAB>text` | tab | `id, text` | tab |
+| `id,text`, semicolons inside quoted text | `,` | `id, text` | `,` |
+| single column `text` | **`csv.Error`** | **splits on `t`**: `Unnamed: 0, ex, Unnamed: 2` | `,` |
+| `samples/mixed_sample.csv` (single column) | **`csv.Error`** | **`ParserError`** | `,` |
+| all 7 `samples/*.csv` | | | `,` |
+
+- `sep=None` breaks the app's own Sample and every single-column file, so it is **rejected**.
+- `csv.Sniffer` raises `csv.Error`, which is **not** a `ValueError`, so it would also escape the
+  upload handler's `except`.
+
+### Design
+
+- **`_detect_delimiter(head: str) -> str`**, a pure function over the file's **first line**:
+  parse it with `csv.reader` once per candidate (`,`, `;`, tab) and return the one giving the
+  most fields. Ties go to `,`, so a single-column file and every current file keep today's
+  behaviour exactly. Quoting is respected, so a quoted header containing `;` doesn't count.
+- **Reading the head:** `uploaded_file.read(65536)`, then `seek(0)` before `pd.read_csv`.
+  Not `getvalue()`, which copies the whole upload (up to 200 MB). Decode with
+  `encoding="utf-8-sig", errors="replace"`: the BOM that Excel's "CSV UTF-8" writes must not
+  become part of the first header, and a multi-byte character cut at the 64 KB boundary must not
+  raise.
+- **Keep the `try` to one statement.** CLAUDE.md's failed-read bullet requires the `try` around
+  `pd.read_csv` to hold exactly that call, so a second statement's `ValueError` can't be shown as
+  a malformed CSV. Detect the delimiter **before** the `try`, and make `_detect_delimiter` unable
+  to raise; a test feeds it garbage bytes and an empty file.
+- **`Sample`** keeps a plain `pd.read_csv`, since its file is known to use commas.
+- **Known limit:** a header that is a quoted field spanning several lines is misread. No real
+  export produces one; document it, don't handle it.
+- **The uploader keeps `type=["csv"]`.** A tab-separated file saved as `.csv` now works; a `.tsv`
+  extension is still refused. Widening the accepted types is a separate decision.
+- **Decide at implementation: which delimiter the download uses.**
+  - **Recommended:** mirror the input. A semicolon file comes back with semicolons, so it opens in
+    the user's Excel exactly as their original did. That means storing the delimiter with the
+    loaded data (`source_sep`, popped by `_clear_data()` like `df`/`source_name`), and
+    `_download_button` passing `sep=`.
+  - Alternative: always write commas. No new state, but the download opens as one column in the
+    same Excel that produced the input.
+
+### Tests
+
+- **Unit (`TestDetectDelimiter`):** every row of the spike table; a BOM-prefixed header; an empty
+  file; invalid UTF-8; a tie (`a,b;c`) goes to `,`; each file in `samples/` detects `,` (glob them,
+  so a new sample is covered automatically).
+- **Flow:** uploading the semicolon example shows the preview with columns `id, text`, auto-detects
+  `text`, and the classified cell is the whole review. **Mutation-test** by making
+  `_detect_delimiter` always return `,`: this test must fail.
+- **If the download mirrors the input:** a semicolon upload downloads with semicolons; a comma
+  upload is unchanged; `source_sep` is gone after Reset, after removing the file and after a
+  failed read.
+
+### Commit
+
+- `fix: detect semicolon- and tab-delimited CSVs`, with its tests and a CLAUDE.md rule (detection
+  details go in the matching `docs/decisions/` file, per G).
+- Independent of 0A–0C, so it can land at any point in Phase 0. As a fix for silently wrong
+  results, it's worth landing early.
 
 ---
 
