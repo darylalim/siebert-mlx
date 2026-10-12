@@ -1,6 +1,9 @@
 .DS_Store
 .claude/.verified
+.claude/settings.local.json
 .env
+.env.*
+!.env.example
 .ipynb_checkpoints
 .pytest_cache
 .ruff_cache
