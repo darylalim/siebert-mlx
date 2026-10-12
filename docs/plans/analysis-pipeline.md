@@ -3,11 +3,290 @@
 Status: **drafted 2026-10-12, not started.** Implement in a fresh session; read this file and
 `CLAUDE.md` first.
 
-Three phases, each merged before the next starts:
+Four phases, each merged before the next starts:
 
+0. **Complementary light and dark themes (0A) and an adaptive layout (0B).** Designed below; 0B starts with measurement spikes.
 1. **Emotion detection.** Designed in full below, and ready to implement.
 2. **Topic clusters.** Outline only; see "Later phases".
 3. **LLM explanations and aspects.** Outline only; see "Later phases".
+
+---
+
+# Phase 0: themes and adaptive layout
+
+## Phase 0A: complementary light and dark themes (designed 2026-10-12)
+
+**Ship Phase 0 before Phase 1, as its own release.** Phase 1 re-measures geometry, recaptures the
+screenshot and adds a chart, so doing the theme first means all of that is measured once, against
+the final colors.
+
+### Why
+
+Light mode is Streamlit's built-in theme, and it has **the exact defects the dark theme was made to
+fix**:
+
+- **The Classify button is `#ff4b4b`, which is `NEGATIVE_COLOR` itself**, so the one call to action
+  reads as "negative". Its white label is **3.30:1**, under the 4.5 floor.
+- **The positive bar `#21c354` is 2.33:1 on white**, under the 3:1 floor for chart marks
+  (WCAG 1.4.11). Light mode's distribution chart fails on exactly the bar that means good news.
+- **The built-in light `codeTextColor` follows `greenTextColor`**, so the preview caption's column
+  name reads as the positive green (the same defect the dark theme fixed). Confirm by rendering.
+- **The two modes don't feel like one app:** the bluish built-in light surfaces (`#f0f2f6`) and the
+  red accent share nothing with the neutral graphite dark mode and its violet accent.
+
+### Design: one identity, mirrored
+
+Neutral surfaces, one violet accent, and the data supplying the only other saturated color, in
+both modes. The values are chosen so each light role mirrors its dark role at the **same contrast
+step**:
+
+| Role (key) | Dark (shipped) | Light (new) | Light ratio | Dark ratio |
+|---|---|---|---|---|
+| `backgroundColor` | `#111214` | `#ffffff` | | |
+| `secondaryBackgroundColor` (sidebar, header) | `#1f2024` | `#efeff1` | 1.15 vs main | 1.15 vs main |
+| `textColor` | `#f2f2f4` | `#111214` (dark's background) | body 18.74, sidebar 16.32 | 16.76 |
+| muted text (text at 0.6) | | | captions 4.89, sidebar 4.70 | 6.51 |
+| `primaryColor` | `#7a58d8` | **`#7a58d8` (same)** | white label 4.98, 4.98 on main, 4.34 on sidebar | 4.98, 3.76, 3.27 |
+| `blueColor` (confidence bars) | `#2b78cc` | **`#2b78cc` (same)** | 4.51 on grid | 4.16 |
+| `borderColor` | `#48494e` | `#b4b4ba` | 2.06 main, ~1.79 sidebar | 2.09, 1.81 |
+| `dataframeHeaderBackgroundColor` | `#1f2024` | `#efeff1` | muted header text 4.70 | 6.09 |
+| `codeTextColor` | `#f2f2f4` (= text) | `#111214` (= text) | caption 4.70 on sidebar | 6.28 |
+
+The light ratios are computed from the config arithmetic, the same way `tests/test_theme.py` does
+it; they have not been measured on a rendered page yet (see Verify). The light primary is the dark
+primary, so its hue clearance (117° from the positive green, ~104° from the negative red, 45° from
+the confidence blue) carries over unchanged.
+
+```toml
+[theme.light]
+primaryColor = "#7a58d8"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#efeff1"
+textColor = "#111214"
+blueColor = "#2b78cc"
+codeTextColor = "#111214"
+borderColor = "#b4b4ba"
+dataframeHeaderBackgroundColor = "#efeff1"
+```
+
+Each key gets a comment carrying its numbers, matching the `[theme.dark]` style. Rewrite the
+file's header comment too, which currently says light mode stays built-in.
+
+**Left unset on purpose:**
+
+- **`yellowColor`, `redTextColor`.** The dark theme needed them because the built-in washes went
+  olive or too dim on graphite; light washes don't have that problem. Measure them on the rendered
+  page, and set them only if a number fails.
+- **`chartCategoricalColors`.** Nothing draws from it today. Phase 1's emotion chart will use the
+  built-in light palette, which suits a light background.
+- **No `[theme.light.sidebar]`.** The sidebar swaps surfaces on its own, exactly as in dark.
+
+### One app change: `POSITIVE_COLOR` `#21c354` → `#1d9e45`
+
+The sentiment colors are literal hexes, not theme keys, so they can't differ per mode. The
+alternative, picking colors with `st.context.theme.type`, was **rejected**: a theme toggle does not
+rerun the script (verified on 1.64.0, see CLAUDE.md), so the chart would show the previous mode's
+colors until some unrelated rerun.
+
+Instead, choose one green that reads in both modes. A color clears 3:1 on both `#ffffff` and
+`#111214` only if its relative luminance is between ~0.12 and ~0.30.
+
+| Constant | Old | New | On white | On `#111214` | Pinned text on its tint, light / dark |
+|---|---|---|---|---|---|
+| `POSITIVE_COLOR` | `#21c354` (2.33 / 8.03) | **`#1d9e45`** | 3.48 | 5.38 | 4.69 / 6.07 |
+| `NEGATIVE_COLOR` | `#ff4b4b` | **unchanged** | 3.30 | 5.68 | 4.67 / 6.10 |
+
+Ripples to handle in the same commit:
+
+- **Tint literal:** `test_tints_the_generated_column` hardcodes `rgba(33, 195, 84, 0.12)`. It
+  becomes `rgba(29, 158, 69, 0.12)`. Keep it a literal; CLAUDE.md explains why that test must not
+  derive it.
+- **Chart color order:** `test_chart_colors_ascend_because_vega_sorts_the_domain` still holds,
+  since `#1d9e45` < `#ff4b4b`. Re-run it anyway; that ordering is exactly what the test exists to
+  catch.
+- **Docs:** update CLAUDE.md's chart-colors bullet, which calls these "Streamlit's own semantic
+  green/red". The green is now the app's own.
+
+### Tests (`tests/test_theme.py`)
+
+- **`TestScope`:** `[theme]` holds exactly `{"dark", "light"}`, with no top-level keys (a key there
+  reaches both modes and was never the plan). Both sections are colors-only and use six-digit hex.
+- **Palettes:**
+  - Build `LIGHT` / `LIGHT_SIDEBAR` the way `DARK` / `SIDEBAR` are built (sidebar = palette +
+    sidebar section + swapped surfaces).
+  - Parametrize every `TestContrast` floor over all four palettes.
+  - Includes the pinned-prediction-on-tint, sentiment-bar, confidence-bar and grid-header tests,
+    which currently read `DARK` only.
+- **New tests: the modes stay complementary.**
+  - `primaryColor` and `blueColor` are identical in both modes. That's the shared identity, and a
+    one-sided edit should fail loudly.
+  - The main-to-sidebar step stays within ±0.05 of each other across modes.
+- **Mutation-test** each new assertion, as the dark suite was.
+
+### Verify (headless, like the dark theme)
+
+- **The menu:** confirm on 1.64.0 that with both `[theme.light]` and `[theme.dark]` defined, the
+  main menu still offers **System / Light / Dark**, and that each mode renders its own section.
+- **States to render in both modes:**
+  - landing, preview, dropdown open, toast;
+  - results, including a tinted row and the chart;
+  - error, warning and the collision notice;
+  - sidebar hover on Classify, and focus ring.
+- **Measure** on the rendered page:
+  - the alert washes and their text, which `test_theme.py` doesn't model;
+  - Classify's hover fill, `darken(primary, 0.15)` = `#522cba` on `#efeff1`;
+  - the focus ring, `primary@0.5`.
+- **Record** the measured light ratios as comments in `config.toml`, replacing the computed ones in
+  the table above.
+- **Known residuals** to check, not fix: the focus ring and the dropdown highlight, as in dark.
+- **Fonts, sizes and radii are untouched**, so `TEXT_COL_WIDTH`, `LONG_TEXT_CHARS` and the geometry
+  numbers stay valid. Spot-check one grid width anyway.
+
+### Docs and release
+
+- **CLAUDE.md:**
+  - project overview, and the three dark-theme bullets (now "themes": scope, palette,
+    constraints);
+  - the chart-colors bullet;
+  - the Stop-hook note (`.streamlit/config.toml` is already fingerprinted, no change);
+  - retire the "light mode is pixel-identical to built-in" claim;
+  - the README Screenshots section: the capture stays dark, but say light is now custom.
+- **Screenshot:** optionally add a light capture (`color_scheme="light"` in
+  `docs/capture_screenshot.py`). CLAUDE.md records that a light shot was deliberately dropped on
+  2026-08-15, so this is a choice to revisit, not an omission to fix.
+- **Version:** Phase 0 (themes **and** the adaptive layout below) ships together as **0.8.0**.
+  Phase 1 then becomes **0.9.0**; the commit-9 wording below is updated to match.
+- **Commits:**
+  - T1: `feat(ui): add a light theme that mirrors the dark one`. Covers the config, `POSITIVE_COLOR`
+    and the tint literal, `test_theme.py`, and the measured comments.
+  - T2: `docs: document the paired themes`.
+  - The version bump moves to the end of Phase 0B (L5).
+
+## Phase 0B: a layout that adapts to different displays (designed 2026-10-12)
+
+### Constraint: one layout, not per-device versions
+
+- **The server can't see the viewport.** `st.context` (1.64) exposes `cookies, headers,
+  ip_address, is_embedded, locale, theme, timezone, timezone_offset, url`, and no width. Guessing
+  from the User-Agent header was rejected: it gets wrong exactly the case that matters most here,
+  a resized desktop window.
+- **No custom CSS.** Streamlit's own theming guidance, and this repo's practice, rule out
+  breakpoint CSS. CLAUDE.md records that `stDecoration`-style selectors silently rot across
+  versions.
+- **So adaptation comes only from three things:**
+  1. Streamlit's own breakpoints: sidebar overlay at ≤ 767 px, main padding 16 → 80 px at 864.
+  2. Wrapping flex rows: `st.container(horizontal=True)` wraps its children.
+  3. Width budgets chosen so the *narrowest* supported display still works.
+
+### Display tiers (CSS px; Retina scaling doesn't change these, browser zoom does)
+
+| Tier | Width | Real devices | Target |
+|---|---|---|---|
+| Phone (LAN only) | 320–767 | iPhone 375–430 | **Works**: no page-level horizontal scroll, everything reachable. Not optimized |
+| Compact | 768–1099 | half-screen windows on a MacBook, iPad | **Good**: nothing clipped; the table may scroll horizontally |
+| Laptop | 1100–1727 | MacBook built-in screens: 1512 (14"), 1728 (16") | **Primary design target**: Sample results fit with no table scroll, sidebar open |
+| Desktop | 1728–2559 | 1920 / 2560 external monitors | **Good**, no dead space |
+| Ultrawide | ≥ 2560 | 3008 Studio Display, 3440 ultrawide | **Readable**: no 2,500 px-wide bars or text lines |
+
+The usable table width at each W is already recorded in CLAUDE.md's geometry bullet:
+- sidebar open: `W − 494` for W ≥ 864, `W − 366` for 768–863;
+- collapsed or phone: `W − 194` for W ≥ 864, `W − 66` below 864.
+
+So a 360 px phone has **294 px**, a 390 px phone **324**, and the 1512 MacBook **1018** with the
+sidebar open.
+
+### Rules (apply to Phase 0B and every later phase)
+
+1. **Pinned-width budget: pinned columns total ≤ 360 px.**
+   - **Why:** pinned columns never scroll, so a pinned set wider than the table leaves nothing
+     scrollable.
+   - **Today:** `Sentiment` 78 + `Confidence` 150 = 228.
+   - **Phase 1 as drafted:** 456 px, which is wider than a phone's whole table area and leaves
+     110 px in a 900 px half-screen window with the sidebar open.
+   - **Fix (Phase 0B, L2):** give every pinned `ProgressColumn` an explicit narrow width (target
+     ≤ 100 px; try `width="small"` and an int, keep the narrowest whose "99.9%" label still reads
+     in both themes). Then Phase 1's four pinned columns total about 78 + 100 + 70 + 100 ≈ 348.
+   - **Why not unpin the scores instead:** unpinned columns get `grow: 1`, so on a 1920 screen two
+     confidence columns would take spare width from the review text (text ≈ 576 px instead of
+     ≈ 970). Pinning narrow is better at every tier.
+   - **Phase 2's `Topic` must fit the same budget or stay unpinned** (that was already an open
+     question there; now there's a number for it).
+2. **No page-level horizontal scroll at any width ≥ 320 px** (WCAG 1.4.10 Reflow).
+   - The grid's *own* horizontal scroll is allowed: data tables are exempt from that rule as
+     two-dimensional content, and pinning keeps the predictions in view.
+   - Check: `document.documentElement.scrollWidth <= innerWidth` at every tier.
+3. **The Results header holds at most two controls at any width:** `Download` (button) +
+   `Exports` (`st.popover`, icon `:material/more_vert:` or `:material/download:`).
+   - Secondary downloads live in the popover: the summary (D) and the conditional filtered
+     download (B). This replaces "a second button in the header row" in B and D.
+   - **Why:** three buttons beside the label and caption would wrap unpredictably in a compact
+     window. A popover takes the same width at every tier and grows downward, not sideways.
+   - Download stays a one-click button: it's the most common action and its tests pin it in the
+     header row.
+4. **Rows that wrap, wrap in reading order.** Metric cards and the sentiment chart stay one
+   horizontal container (already true: the chart drops to its own row at ~1100). Phase 1's emotion
+   chart is its own row, never a third child of the metric row. Check at every tier that cards
+   never squeeze below their label width (`width="content"` already guarantees this).
+5. **Sidebar content stays short enough for a 768 × 600 window.**
+   - Uploader, Sample, column picker and Classify/Reset should be reachable without scrolling the
+     sidebar.
+   - Phase 1 filters go **below** Classify/Reset, so a scroll only ever hides filters, never the
+     action.
+   - Use `st.pills` for the 7 emotions (wraps in the 300 px sidebar) rather than a long
+     `st.multiselect` list.
+
+### Work items
+
+- **L1. `scripts/layout_matrix.py`**, a manual tool like `docs/capture_screenshot.py`
+  (`uv run --with playwright`, system Chrome, headless).
+  - **Viewports:** 360×780, 390×844, 768×1024, 900×700 (half-screen), 1100×800, 1512×982,
+    1728×1117, 1920×1080, 2560×1440, 3440×1440.
+  - **Sidebar:** open and collapsed (≥ 768).
+  - **States:** landing, Sample preview, Sample results, `blank_cells.csv` results, a labeled
+    `text,Sentiment` CSV.
+  - **Records:** each grid's `clientWidth` / `scrollWidth`, the pinned total, how many rows the
+    metric row wraps into, the chart card width, whether the Results header row wrapped (control
+    `top`s equal), page-level `scrollWidth` against `innerWidth`, and whether Classify is in view
+    with no sidebar scroll.
+  - **Output:** a CSV plus screenshots in a scratch directory.
+  - **Baseline** the current app first, before any 0B change, the same way the benchmark (C)
+    baselines Phase 1.
+- **L2. Pinned budget:** narrow the `Confidence` `ProgressColumn` per rule 1, then re-run L1.
+  - **Spike:** what glide does when the pinned set is wider than the table (390 px phone today
+    leaves 96 px). Does the unpinned area still scroll, or does it collapse? This decides whether
+    rule 1's 360 is enough or should be lower.
+  - **Tests:** update `test_generated_columns_are_not_width_capped` (it asserts the
+    `ProgressColumn` call whole) to the new width.
+  - **CLAUDE.md geometry:** `Confidence`'s base width changes from 150, so every S and every
+    overflow onset in CLAUDE.md's geometry bullets moves. That should be an improvement; re-measure
+    all five shapes.
+- **L3. Ultrawide readability cap (spike first).**
+  - **Check:** whether `st.container(width=<int>)` acts as a *maximum*, i.e. falls back to the
+    parent's width when the parent is narrower. Measure it; don't assume.
+  - **If it does:** wrap the summary band (and Phase 1's emotion chart row) in a container capped
+    around 1600 px, so a two-bar chart isn't 2,500 px wide on a 3440 display.
+  - Decide whether to cap the results card too. The trade-off is long-review readability against
+    showing more columns. Choose it from L1 screenshots at 2560 / 3440, not by reasoning.
+  - **If it doesn't:** leave ultrawide uncapped and document it. No CSS.
+- **L4. Table height.**
+  - `st.dataframe`'s default height shows about 10 rows on every display, wasting most of a
+    1117 px-tall MacBook screen or a portrait monitor.
+  - Evaluate a larger fixed height (e.g. 15 rows), checking it still leaves the summary band and
+    the table header on screen at 1100×800.
+  - `height="stretch"` needs a bounded parent, which the main flow isn't. Confirm on 1.64.
+  - Pick the value from L1 screenshots, and pin it as a constant like `CHART_HEIGHT`.
+- **L5. Docs and release:**
+  - CLAUDE.md: replace the geometry and overflow numbers with L1's matrix, add the display tiers
+    and the five rules, and update the phone note in the layout bullet.
+  - Then `chore: bump version to 0.8.0` for all of Phase 0.
+
+### What stays as it is
+
+- Wide layout, `initial_sidebar_state="auto"`, inputs in the sidebar, `TEXT_COL_WIDTH` /
+  `LONG_TEXT_CHARS`. CLAUDE.md records why each was chosen, and nothing here contradicts it.
+- Phones keep the known cost that the sidebar stays open over the results until closed by hand.
+  Streamlit 1.64 has no API to close it, and moving inputs into the main area for phones would need
+  the viewport width the server doesn't have.
 
 ---
 
@@ -78,7 +357,7 @@ Keep `process_dataframe`'s 2-tuple contract **unchanged**, so the existing unit 
 
 - **Rename notice:** add `(EMOTION_COL, emotion_col)` and `(EMOTION_CONFIDENCE_COL, emotion_conf_col)` to the `renamed` filter. The wording ("the model's output was added as …") still reads correctly.
 - **Results table:**
-  - `Emotion` gets a `TextColumn`; `Emotion confidence` gets a `ProgressColumn(format="percent", color="blue")`. Both are `pinned=True` and excluded from `_width_caps`.
+  - `Emotion` gets a `TextColumn`; `Emotion confidence` gets a `ProgressColumn(format="percent", color="blue")` at the **same narrow width Phase 0B chose for `Confidence`**. Both are `pinned=True` and excluded from `_width_caps`. The four pinned columns must total ≤ 360 px (Phase 0B, rule 1); assert the total in a test.
   - **No tint on `Emotion`.** Green and red mean positive and negative in this app, and 7 extra hues would clash with that and with the contrast checks in `tests/test_theme.py`.
 - **Second summary row:** an **`Emotion distribution`** bordered card under the existing band.
   - `st.bar_chart` with `horizontal=True`, `sort=False`, `x_label=""` and no `color=` (the palette is fine here, since emotion carries no good/bad meaning).
@@ -94,12 +373,11 @@ Keep `process_dataframe`'s 2-tuple contract **unchanged**, so the existing unit 
 
 ### 5. Geometry: must re-measure
 
-The two new pinned columns add about **+228 px to S**, the sum of the grid's base column widths (≈78 for `Emotion`, 150 for the progress column; measure, don't trust this). With the sidebar open:
+The original estimate was **+228 px to S** (≈78 for `Emotion`, 150 for a default-width progress column), which would move the Sample's overflow onset from 1022 to ≈1250 with the sidebar open. **Phase 0B's narrow progress columns replace that.** With both confidence columns at ≤ 100 px, the addition is roughly +170 px on top of Phase 0B's new baseline. Measure rather than trust this.
 
-- The Sample results' overflow onset moves from **1022 to ≈1250**, and the labeled `text,Sentiment` shape's from 1148 to ≈1376.
-- At 1440 the Sample still fits (S ≈ 756 against a 946 grid). At 1100 every results shape overflows. The scroll moves only the user's columns, because all four generated columns are pinned.
-- Mitigation to try first: `width="small"` on the emotion `ProgressColumn` (and maybe the sentiment one). Measure both.
-- Re-measure all five shapes listed in CLAUDE.md's "Why the length gate was needed" bullet with headless Playwright (`scrollWidth` against `clientWidth`). Then rewrite that bullet and the geometry bullet with the new numbers.
+- Re-run `scripts/layout_matrix.py` (Phase 0B, L1) across all its viewports and states, plus a results state with emotions.
+- Rules 1–5 from Phase 0B must still hold, in particular the 360 px pinned budget and no page-level horizontal scroll at 320 px.
+- Rewrite CLAUDE.md's geometry bullets from the new matrix.
 
 ## Tests
 
@@ -125,7 +403,7 @@ Order matters. Land the refactor **first, with the existing suite unchanged and 
 ## CI / release
 
 - **Bump the `integration` job's hub cache key suffix `-v1` → `-v2`.** The key is exact and static, so the existing cache hits, never saves, and without the bump every run would re-download and re-convert the emotion checkpoint.
-- Bump `[project].version` to `0.8.0` **only in the final commit, once everything is green**. The `release` job publishes a GitHub Release as soon as a bumped version lands green on `main`.
+- Bump `[project].version` to `0.9.0` (Phase 0 ships as 0.8.0) **only in the final commit, once everything is green**. The `release` job publishes a GitHub Release as soon as a bumped version lands green on `main`.
 
 ## Docs
 
@@ -146,7 +424,7 @@ Order matters. Land the refactor **first, with the existing suite unchanged and 
 6. `feat(ui): summary export` (D) + the shared counts helper.
 7. `test: add the labeled eval set and pin emotion inference against the real checkpoint` (A) + CI cache-key bump. The user reviews the labels before this lands.
 8. `docs: emotion detection; disk usage (S2, S5); re-measure grid geometry; recapture screenshot; record eval, benchmark and per-tab memory numbers (S3)`.
-9. `chore: bump version to 0.8.0` + the repo description and topics below, **in the same commit**, so no copy advertises emotion detection before it's on `main`.
+9. `chore: bump version to 0.9.0` + the repo description and topics below, **in the same commit**, so no copy advertises emotion detection before it's on `main`.
 
 ### Repo description and topics (at release)
 
@@ -282,10 +560,11 @@ Each lands in phase 1 for sentiment + emotion and is extended by phase 2 for top
 - **Download stays whole-file, always.** Its meaning never changes: the source plus the generated
   columns. Making it follow the filter was rejected: a user who forgets a filter is on gets 30 rows
   of a 2,000-row file, silently.
-- **Filtered download (decided 2026-10-12): a conditional second button.**
-  - **When:** it renders only while a filter actually narrows the table (filtered rows < total).
-    With no filter set, the header row is identical to today's, so it costs width only when it's
-    useful.
+- **Filtered download (decided 2026-10-12): a conditional entry in the `Exports` popover.**
+  Phase 0B, rule 3 keeps the Results header to `Download` + `Exports` at any width, so this is not
+  a header button.
+  - **When:** it renders inside the popover only while a filter actually narrows the table
+    (filtered rows < total).
   - **Label and file:** labeled with the count (`Download 30 rows`) and named
     `<source>_filtered.csv`, so the file stays honest after it's forwarded.
   - **Content:** the same column order as the full download, and the same lazy `data=` callable
@@ -322,9 +601,10 @@ Each lands in phase 1 for sentiment + emotion and is extended by phase 2 for top
   - one row per emotion label;
   - in phase 2, one row per topic.
   - Use the resolved column names as `dimension`.
-- **Mechanics:** a second `st.download_button` in the Results header row, with the same lazy
-  `data=` callable and `on_click="ignore"`, and its own key (e.g. `download_summary`). Name the
-  file `<source>_summary.csv`.
+- **Mechanics:** an `st.download_button` inside the Results header's `Exports` popover (Phase 0B,
+  rule 3), with the same lazy `data=` callable and `on_click="ignore"`, and its own key (e.g.
+  `download_summary`). Name the file `<source>_summary.csv`. This commit (6) is where the popover
+  first appears; until then the header holds `Download` alone.
 - **Not in the all-blank arm:** there is nothing to summarize there.
 - **Single source of truth:** compute the counts in one helper shared with the metric cards and the
   charts, so the export can never disagree with what's on screen. Pin that with a test comparing
