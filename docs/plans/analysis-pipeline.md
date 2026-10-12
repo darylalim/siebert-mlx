@@ -420,7 +420,9 @@ across two.
 
 - CLAUDE.md: the `load_model` architecture item (revisions), the CI cache-key note (it's derived
   now), a new privacy bullet (the two config keys and why), and the pin-update procedure.
-- README: offline use, the privacy sentence, and how to open it from a phone.
+- README: offline use, the privacy sentence, and how to open it from a phone. Also turn the
+  License section's SiEBERT sentence into the model table from cross-cutting J, with its first
+  row, and add J's test.
 - `chore: bump version to 0.8.0` for all of Phase 0, after 0D.
 - **Commits:** P1 `feat: pin model revisions` (with the CI key), P2 `feat: private by default`,
   P3 `feat: offline mode` (the cold-cache error), then docs. The bump comes after 0D.
@@ -1204,6 +1206,36 @@ format with a real case, so it isn't re-derived from scratch.
   after the breakdown has shipped and only if asked for, starting with a spike over real
   exports' date formats.
 
+### J. Model licenses in the README (every phase that adds a model; added 2026-10-12)
+
+- **Why:** the repo's MIT license covers the application code only. The models are downloaded
+  at runtime and never redistributed, and the README says so, but it names only SiEBERT. The plan
+  adds up to five more models (emotion, XLM-R, an embedder, an LLM and its fallback), each under
+  its own terms, or none declared.
+- **The README's License section becomes a table**, one row per model the app downloads: repo
+  (linked to its model card), pinned revision (0C, P1), the license as the card declares it (or
+  **"none declared"**), and a closing sentence that every model is downloaded at runtime and not
+  redistributed. The MIT sentence about the app code stays above it, unchanged.
+- **When:**
+  - Phase 0C (P4) converts the section, with SiEBERT as the first row (none declared).
+  - Each phase that adds a model adds its row **in the commit that first loads the model**, not
+    in the release commit, so `main` never downloads a model the README doesn't list.
+- **How to check a license:** read `cardData.license` from the Hub API **at the pinned revision**
+  and the card text itself; a license can change between revisions. Record the date checked
+  in the matching `docs/decisions/` file (per G).
+- **Stop and ask if a license restricts use.** If a card declares anything other than a
+  permissive license (non-commercial, research-only, an acceptable-use policy, a gated download
+  needing terms accepted), bring it to the user **before** building on the model, the same way
+  A's go/no-go stops work. Options then: accept and document it, or pick an alternative model.
+- **Known so far (from this plan, not re-verified):** SiEBERT and the emotion model declare none
+  (see Risks); `papluca/xlm-roberta-base-language-detection` is recorded as MIT in F's table.
+  **Not checked:** the Qwen3 embedding models (Phase 2) and the Qwen3.5 LLMs (Phase 3).
+- **Test:** a unit test (in `tests/test_docs.py`, G) that every `ModelRef`'s repo appears in the
+  README's License section, so adding a model without its row fails the Stop hook. Mutation-test
+  by removing SiEBERT's row. A Phase 3 model loaded lazily is still a `ModelRef`, so it's covered.
+- **Not affected:** `pyproject.toml`'s `license = "MIT"` and the `LICENSE` file describe the app
+  code and stay as they are.
+
 ## Storage (agreed 2026-10-12)
 
 Measured on the dev machine on 2026-10-12, with `huggingface_hub` 1.32.0.
@@ -1343,5 +1375,5 @@ of these without a plan of its own:
 
 - **Accuracy is modest:** 66% on the card's own balanced 7-class eval (chance is 14%). The training data is Twitter, Reddit, self-reports and TV dialogue, so product and app reviews are out of domain. Show the confidence rather than hiding it, and consider wording the help text as "likely emotion".
 - **Disagreements are expected, not bugs.** SiEBERT is positive/negative only, so `positive` + `neutral` or `negative` + `surprise` will be common. Do not "reconcile" the two outputs. A later phase could use those disagreements as a "review these rows" filter.
-- **No license declared** on the model card (`cardData.license` is absent, which is also true of SiEBERT). The app downloads it at runtime rather than redistributing it, so its status is the same as today's. Note it in the README.
+- **No license declared** on the model card (`cardData.license` is absent, which is also true of SiEBERT). The app downloads it at runtime rather than redistributing it, so its status is the same as today's. Note it in the README's model table (cross-cutting J).
 - Upstream ships only `pytorch_model.bin` (plus `tf_model.h5`, which `allow_patterns` already excludes). If upstream ever adds `model.safetensors`, the conversion is skipped once the pin (0C, P1) is bumped to that revision; until then nothing changes.
