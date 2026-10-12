@@ -479,13 +479,25 @@ silent, plausible, wrong. `except ValueError` can't catch it, because nothing fa
   export produces one; document it, don't handle it.
 - **The uploader keeps `type=["csv"]`.** A tab-separated file saved as `.csv` now works; a `.tsv`
   extension is still refused. Widening the accepted types is a separate decision.
-- **Decide at implementation: which delimiter the download uses.**
-  - **Recommended:** mirror the input. A semicolon file comes back with semicolons, so it opens in
-    the user's Excel exactly as their original did. That means storing the delimiter with the
-    loaded data (`source_sep`, popped by `_clear_data()` like `df`/`source_name`), and
-    `_download_button` passing `sep=`.
-  - Alternative: always write commas. No new state, but the download opens as one column in the
-    same Excel that produced the input.
+- **The download uses the input's delimiter (decided 2026-10-12).** A semicolon file comes back
+  with semicolons, so it opens in the user's Excel exactly as their original did. This keeps the
+  download rule ("the source plus two columns") true of the file's format as well as its content.
+  - **State:** store the detected delimiter with the loaded data as `source_sep`. The upload
+    handler writes it beside `df`/`source_name`, `_load_sample` sets `","`, and `_clear_data()`
+    pops it with the other two, so every path that forgets a file forgets its delimiter.
+  - **Download:** `_download_button` passes `sep=` to `to_csv`, still inside the lazy `data=`
+    callable. Phase 1's filtered download (B) and summary export (D) use the same `sep`, so all of
+    one run's files open the same way.
+  - **A session from before this change:** the file watcher reruns an edited script against the
+    `session_state` already in memory, so a session can hold `df` with no `source_sep`. Read it
+    with `.get("source_sep", ",")`. Unlike `result_generated_cols`, a default is right here:
+    `","` is exactly what that session's file was read with.
+  - **Known limit, not handled:** the confidence column is written with a `.` decimal point. Excel
+    in a comma-decimal locale may read `0.9876` as text there. The user's own numeric cells are
+    unaffected (pandas keeps `3,5` as a string and writes it back unchanged), so only the
+    generated column is touched. Revisit only if a user reports it.
+  - **Rejected: always write commas.** No new state, but the download would open as one column in
+    the same Excel that produced the input, which turns a fixed reading bug into a writing bug.
 
 ### Tests
 
@@ -495,9 +507,11 @@ silent, plausible, wrong. `except ValueError` can't catch it, because nothing fa
 - **Flow:** uploading the semicolon example shows the preview with columns `id, text`, auto-detects
   `text`, and the classified cell is the whole review. **Mutation-test** by making
   `_detect_delimiter` always return `,`: this test must fail.
-- **If the download mirrors the input:** a semicolon upload downloads with semicolons; a comma
-  upload is unchanged; `source_sep` is gone after Reset, after removing the file and after a
-  failed read.
+- **Download delimiter:** a semicolon upload downloads with semicolons and a tab upload with tabs;
+  a comma upload and Sample are byte-identical to today; `source_sep` is gone after Reset, after
+  removing the file and after a failed read; a hand-seeded session with `df` but no `source_sep`
+  downloads with commas instead of raising. **Mutation-test** by dropping `sep=` from the
+  download: the semicolon test must fail.
 
 ### Commit
 
