@@ -209,10 +209,24 @@ sidebar open.
      110 px in a 900 px half-screen window with the sidebar open.
    - **Fix (Phase 0B, L2):** give every pinned `ProgressColumn` an explicit narrow width (target
      ≤ 100 px; try `width="small"` and an int, keep the narrowest whose "99.9%" label still reads
-     in both themes). Then Phase 1's four pinned columns total about 78 + 100 + 70 + 100 ≈ 348.
+     in both themes). Then Phase 1's four pinned columns total about 78 + 100 + 70 + 100 ≈ 348 with plain headers.
    - **Why not unpin the scores instead:** unpinned columns get `grow: 1`, so on a 1920 screen two
      confidence columns would take spare width from the review text (text ≈ 576 px instead of
      ≈ 970). Pinning narrow is better at every tier.
+   - **Budget the collision state, not just plain headers.** When the file already has a
+     `Sentiment` or `Emotion` column, the generated headers become `Sentiment (model)` (126 px,
+     measured in CLAUDE.md, against 78) and `Emotion (model)` (~118, estimated). Auto-sized text
+     columns would then total about 126 + 100 + 118 + 100 ≈ 444, over budget on exactly the
+     labeled-CSV path the rename exists for.
+     - **Preferred fix:** give all four pinned columns explicit widths (labels ~90, scores ≤ 100),
+       so the total doesn't depend on the names. A renamed header then truncates
+       (`Sentiment (mo…`). Check in L1 screenshots that it's still distinguishable from the user's
+       own `Sentiment`, which renders in full. The rename notice already names both columns, and a
+       `help=` on each pinned column can carry the full name.
+     - **Fallback**, if truncation reads badly: allow the collision state up to ~450 px, and rely on
+       L2's spike result for what glide does when pinned columns are wider than the table.
+     - Either way, L1 measures the collision state (its labeled `text,Sentiment` CSV, plus an
+       `Emotion` column once Phase 1 lands), and the pinned-total test covers the renamed names too.
    - **Phase 2's `Topic` must fit the same budget or stay unpinned** (that was already an open
      question there; now there's a number for it).
 2. **No page-level horizontal scroll at any width ≥ 320 px** (WCAG 1.4.10 Reflow).
@@ -261,6 +275,8 @@ sidebar open.
     rule 1's 360 is enough or should be lower.
   - **Tests:** update `test_generated_columns_are_not_width_capped` (it asserts the
     `ProgressColumn` call whole) to the new width.
+  - **Collision state:** measure the pinned total with a colliding `Sentiment` column too, and
+    decide between rule 1's preferred fix and its fallback.
   - **CLAUDE.md geometry:** `Confidence`'s base width changes from 150, so every S and every
     overflow onset in CLAUDE.md's geometry bullets moves. That should be an improvement; re-measure
     all five shapes.
@@ -411,7 +427,7 @@ across two.
 ## Goal
 
 Every Classify run adds two columns next to `Sentiment` / `Confidence`: **`Emotion`** (one of
-`anger`, `disgust`, `fear`, `joy`, `neutral`, `sadness`, `surprise`) and **`Emotion confidence`**.
+`anger`, `disgust`, `fear`, `joy`, `neutral`, `sadness`, `surprise`) and **`Emotion score`**.
 Results show an emotion distribution, and the download carries all four generated columns.
 
 ## Decisions (made with the user, 2026-10-12)
@@ -419,6 +435,7 @@ Results show an emotion distribution, and the download carries all four generate
 | Decision | Choice | Why |
 |---|---|---|
 | Model | [`j-hartmann/emotion-english-distilroberta-base`](https://huggingface.co/j-hartmann/emotion-english-distilroberta-base) | Same `RobertaForSequenceClassification` class SiEBERT uses, so it reuses the whole MLX load path; 82M params, ~160 MB in fp16 |
+| Score column | **`Emotion score`**, not `Emotion confidence` (2026-10-12) | Phase 0B narrows pinned score columns to ≤ 100 px. `Emotion confidence` (18 characters) needs ~130 px and would truncate, and CLAUDE.md rules out a short `label=` because headers must match the download. `Emotion score` is ~13 characters, estimated at ~100 px from CLAUDE.md's header widths; **measure it in L2/§5**. SiEBERT's `Confidence` keeps its name |
 | Activation | **Always on**, no toggle | No new state to invalidate. A toggle would need result invalidation like a column change, plus its own flow tests |
 | Rejected | LLM stage (`mlx-lm`), embedding clusters, RoBERTa-large emotion model | LLM: new dependency, answers vary run to run, seconds per row. Clusters: needs a choice of cluster count and a new UI. Large model: ~4× the per-row cost, not spiked |
 
@@ -438,11 +455,11 @@ Loaded via the app's exact path (`snapshot_download` → `.bin`→safetensors �
 
 ### 1. Loading (`streamlit_app.py`)
 
-- Add `EMOTION_MODEL_PATH = "j-hartmann/emotion-english-distilroberta-base"`, and move SiEBERT's path to a `SENTIMENT_MODEL_PATH` constant.
-- Extract the body of `load_model` into an **uncached** `_load_classifier(model_path)` that returns `(model, tokenizer)`. Keep the `mx.eval` and its comment there; it applies to every model.
+- Add `EMOTION_MODEL = ModelRef("j-hartmann/emotion-english-distilroberta-base", "0e1cd914e3d46199ed785853e12b57304e04178b")` beside 0C's `SENTIMENT_MODEL` (0C, P1).
+- Extract the body of `load_model` into an **uncached** `_load_classifier(ref: ModelRef)` that returns `(model, tokenizer)` and passes `ref.revision` to all three loading calls. Keep the `mx.eval` and its comment there; it applies to every model.
 - `load_model()` keeps its name, signature and decorator, so conftest, the `real_model` fixture and the CLAUDE.md references still hold. Add a sibling `load_emotion_model()` with `@st.cache_resource(show_spinner="Loading emotion model...", show_time=True)`.
 - Call site: `emotion_model, emotion_tokenizer = load_emotion_model()` directly after `model, tokenizer = load_model()`. Same eager-below-the-chrome placement, for the same reasons (see CLAUDE.md's UI bullet).
-- `_ensure_safetensors` is already generic in `model_path`, so no change. Reword its "1.4 GB" comment so it doesn't read as SiEBERT-only.
+- `_ensure_safetensors` is already generic in the repo. By this point it takes 0C's required `revision` and has been split in two by S1 (commit 2), so Phase 1 adds nothing to it. Reword its "1.4 GB" comment so it doesn't read as SiEBERT-only.
 - Use a **separate tokenizer** per model, even though the ids are identical today. Tokenizing is negligible next to the encoder, and sharing one would silently break if either model were swapped.
 
 ### 2. Inference
@@ -455,11 +472,11 @@ Keep `process_dataframe`'s 2-tuple contract **unchanged**, so the existing unit 
 - New `add_emotions(result, source_df, text_column, model, tokenizer) -> (DataFrame, EmotionColumns)`:
   - Returns a copy of `result` with the two emotion columns appended.
   - Blanks get `""` / `0.0`, like sentiment.
-  - Shows its own `st.progress(0, text="Detecting emotions...")` and empties it when done. Also give `process_dataframe`'s bar a `text=` so the two bars can be told apart.
+  - Shows its own `st.progress(0, text="Detecting emotions...")` and empties it when done. Also give `process_dataframe`'s bar a `text=` so the two bars can be told apart. **Commit 5 (E) replaces the two bars with one run-wide bar** and an overall ETA.
 - New `EmotionColumns(emotion, confidence)` NamedTuple. Resolve names with `_unique_column_name` against `taken = set(source_df.columns) | set(generated_cols)`:
-  - Constants `EMOTION_COL = "Emotion"` and `EMOTION_CONFIDENCE_COL = "Emotion confidence"`.
+  - Constants `EMOTION_COL = "Emotion"` and `EMOTION_SCORE_COL = "Emotion score"`.
   - A source `Emotion` column is preserved and the model's becomes `Emotion (model)`, same rule and direction as sentiment.
-  - Check that `Emotion confidence` doesn't fall inside `Emotion`'s name space (it doesn't; the prefix test is `Emotion (model)`), and add a unit test for it.
+  - Check that `Emotion score` doesn't fall inside `Emotion`'s name space (it doesn't; the prefix test is `Emotion (model)`), and add a unit test for it.
 - Use a separate NamedTuple rather than widening `GeneratedColumns`. `_render_results` unpacks the pair positionally and the flow tests hand-seed 2-tuples, so widening it would ripple through every one of those for no gain.
 
 ### 3. State
@@ -471,9 +488,9 @@ Keep `process_dataframe`'s 2-tuple contract **unchanged**, so the existing unit 
 
 ### 4. UI (`_render_results`)
 
-- **Rename notice:** add `(EMOTION_COL, emotion_col)` and `(EMOTION_CONFIDENCE_COL, emotion_conf_col)` to the `renamed` filter. The wording ("the model's output was added as …") still reads correctly.
+- **Rename notice:** add `(EMOTION_COL, emotion_col)` and `(EMOTION_SCORE_COL, emotion_score_col)` to the `renamed` filter. The wording ("the model's output was added as …") still reads correctly.
 - **Results table:**
-  - `Emotion` gets a `TextColumn`; `Emotion confidence` gets a `ProgressColumn(format="percent", color="blue")` at the **same narrow width Phase 0B chose for `Confidence`**. Both are `pinned=True` and excluded from `_width_caps`. The four pinned columns must total ≤ 360 px (Phase 0B, rule 1); assert the total in a test.
+  - `Emotion` gets a `TextColumn`; `Emotion score` gets a `ProgressColumn(format="percent", color="blue")` at the **same narrow width Phase 0B chose for `Confidence`**. Both are `pinned=True` and excluded from `_width_caps`. The four pinned columns must total ≤ 360 px (Phase 0B, rule 1), **including when both sentiment and emotion names are renamed**; assert both totals in a test.
   - **No tint on `Emotion`.** Green and red mean positive and negative in this app, and 7 extra hues would clash with that and with the contrast checks in `tests/test_theme.py`.
 - **Second summary row:** an **`Emotion distribution`** bordered card under the existing band.
   - `st.bar_chart` with `horizontal=True`, `sort=False`, `x_label=""` and no `color=` (the palette is fine here, since emotion carries no good/bad meaning).
@@ -503,7 +520,7 @@ Order matters. Land the refactor **first, with the existing suite unchanged and 
   - Generalize `_make_mock_model` to take an `id2label` (currently 2-class). Add a 7-class pair.
   - `add_emotions`: labels follow the text, not the row (sorted batching); blanks get `""`/`0.0`; input not mutated; returns a copy.
   - `EmotionColumns` naming: plain names, a source `Emotion` column, a source `Emotion (model)` column, and both sentiment and emotion colliding at once.
-  - `load_emotion_model` mirrors the existing `TestLoadModel` tests (path, `float16=True`, `mx.eval`, token).
+  - `load_emotion_model` mirrors the existing `TestLoadModel` tests (repo, the same `revision=` on all three loading calls, `float16=True`, `mx.eval`, token).
 - **Flow (`tests/test_app_flow.py`):**
   - `_FakeModel` is used for *both* models, since conftest patches the class globally. It answers 2-wide logits, which `id2label` maps to anger/disgust. Either is fine, but make that explicit in its docstring, or make its width follow `len(config.id2label)`.
   - New tests:
@@ -701,6 +718,11 @@ Each lands in phase 1 for sentiment + emotion and is extended by phase 2 for top
   correct rows, **one count per model**. That catches a changed checkpoint, tokenizer or label
   mapping without thresholds that can't decide whether a 1-point move is noise. The intervals are
   for humans reading CLAUDE.md, not for the gate.
+  - **Pin from CI, not only from the M2 Max.** The `integration` job runs on GitHub's macOS
+    runner, a different GPU. The existing 4-decimal pins already pass there, but across 200 rows a
+    borderline prediction flipping is likelier than a 4th-decimal move. Before committing the
+    counts, run the test both locally and in CI. If they differ, pin CI's value, and record both
+    and the rows that flip.
 - `samples/` is already in the Stop hook's fingerprint, so edits to the eval set re-run the gates.
 
 ### B. Filter the results table
@@ -715,7 +737,14 @@ Each lands in phase 1 for sentiment + emotion and is extended by phase 2 for top
   - **Metrics and charts stay whole-file. Only the table filters.** The summary describes the run,
     and a table caption says "Showing N of M rows".
 - **Widget keys:** scope them to the loaded dataset the same way the text-column selectbox is
-  keyed, so a filter set on one file doesn't silently carry into the next.
+  keyed, so a filter set on one file doesn't silently carry into the next, **and to the result**.
+  - **Why the result too:** changing the text column invalidates the results without loading a new
+    file, and re-classifying produces new labels. Dataset-keyed filters would survive with the old
+    selections, hiding every row or keeping emotion values that no longer appear.
+  - **How:** a `result_run` counter in `session_state`, bumped every time the classify branch
+    writes the `result_*` keys, and part of every filter key. It's never popped (a fresh count is
+    what makes a fresh widget), so it stays out of `_clear_results`.
+  - **Pin:** set a filter, change the column and back, re-classify, and assert the filter is reset.
 - **Download stays whole-file, always.** Its meaning never changes: the source plus the generated
   columns. Making it follow the filter was rejected: a user who forgets a filter is on gets 30 rows
   of a 2,000-row file, silently.
@@ -764,6 +793,15 @@ Each lands in phase 1 for sentiment + emotion and is extended by phase 2 for top
   rule 3), with the same lazy `data=` callable and `on_click="ignore"`, and its own key (e.g.
   `download_summary`). Name the file `<source>_summary.csv`. This commit (7) is where the popover
   first appears; until then the header holds `Download` alone.
+- **Skipped rows, and what `share` divides by:** use the metric cards' rule, so the export can't
+  repeat the problem the `Skipped` card fixed (shares falling short of 100% with nothing explaining
+  the gap).
+  - `share` divides by **total rows in the file**, the same denominator as the Positive/Negative
+    cards.
+  - When any rows were skipped, each dimension gets a `(skipped)` value row, so each dimension's
+    shares sum to 100%.
+  - Pin it with a test on `samples/blank_cells.csv`: per dimension, `rows` sums to the file's row
+    count and `share` sums to 1.
 - **Not in the all-blank arm:** there is nothing to summarize there.
 - **Single source of truth:** compute the counts in one helper shared with the metric cards and the
   charts, so the export can never disagree with what's on screen. Pin that with a test comparing
@@ -782,11 +820,17 @@ Each lands in phase 1 for sentiment + emotion and is extended by phase 2 for top
     preview bullet). Above 150k rows Streamlit switches to lazy loading by itself. **Check** that
     lazy loading keeps a 200 MB CSV's grid under the message limit; don't assume it.
 - **Design, in order of value:**
-  1. **A live ETA in the progress bar.** `st.progress(value, text=...)`, with "Classifying 1,240
-     of 10,000 rows, about 3 min left" estimated from elapsed time per row so far. That's
-     machine-independent, unlike a rows/s constant from the M2 Max. Because of the length sort,
-     short rows go first and an early estimate runs **optimistic**: estimate from **characters**
-     done against characters total, not rows. Pin with a unit test using a fake clock.
+  1. **One run-wide progress bar with a live ETA.** `st.progress(value, text=...)`, with
+     "Step 1 of 2: sentiment · about 3 min left" estimated from elapsed time so far. That's
+     machine-independent, unlike a rows/s constant from the M2 Max.
+     - **One bar for the whole run, not one per model.** With a bar per pass (sentiment, then
+       emotion, then F's language), each bar's own ETA claims to be nearly done before the next
+       pass starts. Replace them with a single bar: `_classify_texts` takes a progress callback,
+       and each pass's share of the bar is weighted by its measured cost from C (a per-model
+       constant, e.g. emotion ≈ 0.1–0.25× SiEBERT; record where it came from).
+     - **Count characters, not rows.** The length sort runs short rows first, so a rows-based
+       early estimate would be optimistic.
+     - Pin with a unit test using a fake clock, including the hand-off between passes.
   2. **A pre-run estimate for big files.** Above `WARN_ROWS` (set from C's benchmark: roughly
      where a run passes ~2 minutes), the sidebar shows an `st.caption` under Classify: "~N min
      for this file", from C's measured chars/s. Only above the threshold, since small files need
@@ -807,6 +851,11 @@ Each lands in phase 1 for sentiment + emotion and is extended by phase 2 for top
      - **Prove it:** a unit test with the real tokenizer encodes long texts (including one with
        a cut inside a word and one inside a whitespace run) both ways, and compares `input_ids`
        bitwise. The constant and the 66 go in a comment.
+     - **Per tokenizer, not one constant.** The 66 holds only for the two RoBERTa BPE vocabularies.
+       F's XLM-R uses a SentencePiece vocabulary, and Phase 2's Qwen3 embedder reads up to 32k
+       tokens, so a 40,000-character cut could change its input. Store each model's cut beside
+       its `ModelRef`, as `(max_length − 2) × longest token + margin`. A test recomputes the
+       longest token from each real tokenizer, so a tokenizer change fails it.
      - Measure the saving on one 1 MB cell first; if it's negligible, drop this item.
 - **Cancel:** Streamlit already stops a running script when the user clicks any widget, or Stop in
   the main menu. The interruption lands at the next `st` call, i.e. the next `progress_bar.progress`.
@@ -837,6 +886,20 @@ Each lands in phase 1 for sentiment + emotion and is extended by phase 2 for top
     (`Language (model)` if the file has one).
   - It's **not pinned** (it isn't a prediction the user came for), so it costs nothing against
     0B's 360 px pinned budget.
+- **State, loading and layout:** the same plumbing as every generated column, which Phase 1
+  established:
+  - a `result_language_cols` key, popped by `_clear_results` and part of the render guard (the
+    file-watcher-across-a-code-change case again);
+  - a **required** `_render_results` argument, so `ty` flags every missed call site;
+  - **the model class travels with the `ModelRef`.** `_load_classifier` builds a
+    `RobertaForSequenceClassification`, and XLM-R needs `XLMRobertaForSequenceClassification`.
+    Add a `model_class` field (defaulting to the RoBERTa class) rather than a second loader. Check
+    that the CI cache-key grep (0C, P1) still matches the longer `ModelRef(...)` lines.
+  - **The metric row's worst case.** Phase 1 §4 kept the first row to its existing cards because
+    the chart is squeezed at 1280. With `Skipped` *and* `Not English` both showing, the row holds
+    six cards plus the chart. Add a file with both blank and non-English rows to L1's states, and
+    apply rule 4. If the chart drops under ~215 px at 1512, give it its own row in that state
+    rather than dropping a card.
 - **Detector (spike decides, three candidates):**
 
 | Option | Runs on | Size | Notes |
@@ -847,16 +910,20 @@ Each lands in phase 1 for sentiment + emotion and is extended by phase 2 for top
 
   - **Recommendation:** the XLM-R model, for consistency (all inference on MLX, one loader path
     via `_load_classifier` and a `ModelRef`), unless the spike shows a false-positive problem.
-  - **The metric that matters is false positives on English:** run it over every `samples/*.csv`
-    (all English, ~230 rows including slang, emoji and app-store shorthand). Each English row it
-    flags is a wrong warning on the user's data. Also measure it on a small non-English set.
+  - **The metric that matters is false positives on English:** run it over the sample rows (all
+    English: 200 unique domain rows, including slang, emoji and app-store shorthand). Each English
+    row it flags is a wrong warning on the user's data. Also measure it on a small non-English set.
+  - **Tune and report on different rows.** Pick the threshold on two domains (e.g. product and
+    movie reviews) and report the false-positive rate on the other three. Tuning and scoring on
+    the same rows would make the rate optimistic. `mixed_sample.csv` is a subset of the domain
+    files, so it isn't a separate set.
   - **Short texts** ("ok", "lol", "10/10") are where every detector is weakest. Flag a row only
     when the top language isn't `en` **and** its probability clears a threshold picked from the
     spike; below the threshold, write `en`. Record the threshold and why.
 - **Data:** `samples/non_english.csv`, ~20 rows across 5–6 languages plus 5 English controls, for
   the flow tests and the spike. Hand-written, and kept apart from `labeled_eval.csv` (A).
 - **Cost:** another full pass (12 layers, base size): benchmark it (C) and give it its own budget
-  (≤ +20% over Phase 1). Disk +0.56 GB, memory +0.56 GB.
+  (≤ +20% over Phase 1). Disk +1.11 GB (fp32 on disk), memory ~0.56 GB in fp16.
 - **Release:** its own minor version after Phase 1's 0.9.0 (0.10.0), with the README feature list
   and the description left unchanged (it's a guard, not a headline feature).
 
@@ -872,7 +939,7 @@ Measured on the dev machine on 2026-10-12, with `huggingface_hub` 1.32.0.
 | Memory: model weights | One fp16 copy per model | `@st.cache_resource`, one per server process, shared by all tabs | Until the server process stops |
 | Memory: session data | `df`, `result_df`, `result_*`, widget keys | `st.session_state`, one set per browser tab | Until the tab closes or the server restarts. No size limit, no eviction |
 | User files | Uploads and downloads | Streamlit, in memory; downloads are generated on click | Never written to disk on the server |
-| CI | Model cache | `actions/cache`, exact static key | Until the `-vN` suffix is bumped |
+| CI | Model cache | `actions/cache`, key derived from the pinned revisions (0C, P1) | Until a pin changes |
 
 ### Measured today
 
@@ -890,8 +957,8 @@ Measured on the dev machine on 2026-10-12, with `huggingface_hub` 1.32.0.
 | Phase | New disk | Memory |
 |---|---|---|
 | Today | 2.84 GB (SiEBERT `.bin` + converted copy) | ~0.7 GB weights |
-| 1. Emotion | +0.63 GB → 0.31 GB once S1 lands | +0.16 GB |
-| F. Language | +0.56 GB (XLM-R, already safetensors, no conversion) | +0.56 GB |
+| 1. Emotion | +0.63 GB (`.bin` + converted copy). 0.31 GB only if S1's **optional** `.bin` deletion lands: S1 alone stops re-downloads, not the first download | +0.16 GB |
+| F. Language | +1.11 GB (XLM-R's `model.safetensors` is fp32 on disk; checked 2026-10-12). Already safetensors, so no second copy | +0.56 GB (fp16) |
 | 2. Topics | +0.34 GB (4-bit) to +1.2 GB (bf16) | similar |
 | 3. LLM | +6 GB (9B 4-bit); +3 GB more if the 4B fallback is also cached | +6 GB, only after the first click |
 
