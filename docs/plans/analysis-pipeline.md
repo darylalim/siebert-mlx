@@ -539,7 +539,7 @@ Order matters. Land the refactor **first, with the existing suite unchanged and 
 5. `feat: large-file limits` (E): the live ETA, the row ceiling, the character pre-slice, + tests. After commit 4, so the limits are set against the two-model cost.
 6. `feat(ui): sidebar filters for sentiment and emotion` (B) + flow tests.
 7. `feat(ui): summary export` (D) + the shared counts helper.
-8. `test: add the labeled eval set and pin emotion inference against the real checkpoint` (A). The user reviews the labels before this lands.
+8. `test: add the labeled eval set and pin emotion inference against the real checkpoint` (A). Lands in three steps the user gates: the labeling guide is agreed, then the user reviews every drafted label, then the κ re-label. The gate's counts are pinned only after that.
 9. `docs: emotion detection; large-file limits; disk usage (S2, S5); re-measure grid geometry; recapture screenshot; record eval, benchmark and per-tab memory numbers (S3)`.
 10. `chore: bump version to 0.9.0` + the repo description and topics below, **in the same commit**, so no copy advertises emotion detection before it's on `main`.
 
@@ -643,22 +643,64 @@ Each lands in phase 1 for sentiment + emotion and is extended by phase 2 for top
 
 ### A. Quality check on real data
 
-- **Why:** today the only evidence for any prediction is each model card's own claim, and the
-  emotion model's 66% was measured on tweets, Reddit and dialogue, not on reviews like the ones
-  this app is fed.
-- **Data:** `samples/labeled_eval.csv`, about 60 rows drawn from the existing domain samples (12
-  per domain), with columns `text, emotion` (and `topic` in phase 2).
+- **Why:** today the only evidence for any prediction is each model card's own claim. SiEBERT's
+  93% is an average over 15 datasets, and the emotion model's 66% was measured on tweets, Reddit
+  and dialogue, not on reviews like the ones this app is fed. **Both** models are evaluated: the
+  sentiment column is the app's main feature, and it shouldn't be the one left on the card's word.
+- **Data:** `samples/labeled_eval.csv`, with columns `text, gold_sentiment, gold_emotion` (and
+  `gold_topic` in phase 2).
+  - **All 200 unique domain rows, not a sample of 60.** The five domain files hold 200 unique
+    texts, and `mixed_sample.csv`'s 20 are all among them (checked 2026-10-12). Labeling the whole
+    pool avoids choosing a sample, and gives seven emotion classes ~29 rows each on average rather
+    than ~9. One row then moves accuracy 0.5 points instead of 1.7. Draft in five per-domain
+    batches, so review can stop and resume.
+  - **The `gold_` prefix** keeps the labels apart from the generated `Sentiment` / `Emotion`
+    columns, so the eval run never hits the collision path by accident. (A separate flow test
+    already covers that path on purpose.) Lowercase `emotion` wouldn't collide with `Emotion`
+    either, but the prefix makes it impossible to read the two as the same column.
   - **The labels must come from a human.** Claude may draft them, but a model's labels used to
     grade a model measure agreement between them, not accuracy. The user reviews every row before
-    it counts.
-  - It does **not** need a `Sentiment` column. If one is added, it exercises the collision path on
-    purpose.
+    it counts. Record in the file's header comment (or a sibling `.md`) who labeled it and when.
+- **Labeling guide: `samples/labeled_eval.md`, written and agreed before any row is labeled.**
+  - **`gold_sentiment`:** `positive`, `negative` or `ambiguous`. SiEBERT is binary, so it has
+    no right answer for a genuinely neutral or mixed review ("Arrived on time. Does what it says.",
+    "Great food, rude staff"). Forcing one would grade the model on a coin flip.
+  - **`gold_emotion`:** one of the model's seven labels (`anger, disgust, fear, joy, neutral,
+    sadness, surprise`), or `ambiguous`.
+  - **`ambiguous` rows are excluded from scoring** and counted separately. The report prints how
+    many there are per column, so a guide that excludes too much is visible.
+  - **Rules for the known hard boundaries.** The quoted examples here are illustrative; the guide
+    itself gives each rule one worked example taken from the pool:
+    - `neutral` vs mild `joy`: "Works fine" is `neutral`; "Works great, really happy" is `joy`.
+    - `anger` vs `disgust`: anger is aimed at someone or something that did wrong; disgust is
+      revulsion (food, hygiene, content).
+    - Sarcasm: label the **intended** meaning ("Oh great, it crashed again" is `negative` /
+      `anger`), since that's what a user of the app wants back.
+    - Mixed reviews: label the overall verdict if one is clear (a closing "would not return"),
+      otherwise `ambiguous`.
+  - **A self-consistency check stands in for a second annotator.** After labeling, re-label a
+    random 20 rows (fixed seed) blind, a day later, and report the agreement (Cohen's κ). With one
+    annotator that's the only ceiling on how much the scores can mean. If κ is low for a class,
+    tighten its rule rather than trusting its F1.
 - **Tool:** `scripts/eval_quality.py`, run by hand like `docs/capture_screenshot.py`. It runs the
-  real models and prints accuracy, macro-F1 and a confusion matrix.
-- **Record the numbers** in CLAUDE.md, with the date and the versions used.
+  real models over the file through `process_dataframe` / `add_emotions` (the app's own path,
+  including the sort and batching) and prints, per model:
+  - accuracy and macro-F1 over the scored (non-`ambiguous`) rows;
+  - **95% bootstrap confidence intervals** for both (1,000 resamples, fixed seed, stdlib
+    `random`; no new dependency). With a few hundred rows the interval is the honest headline, and
+    a later run's change can be read against it;
+  - **per-class support, precision, recall and F1**, with a class supported by fewer than 10
+    scored rows marked `low support`. Macro-F1 is printed twice, over all classes and over
+    well-supported ones only, so one rare class (likely `disgust` or `fear` in reviews) can't
+    swing the headline unseen;
+  - a confusion matrix, and the count of `ambiguous` rows per column;
+  - for sentiment, the same metrics **per domain**, since the card's 93% hides domain spread.
+- **Record the numbers** in CLAUDE.md, with the date and the versions used: the point estimate
+  *and* the interval, per-class support, and κ.
 - **Gate:** the models are deterministic, so an integration test can pin the **exact** number of
-  correct rows. That catches a changed checkpoint, tokenizer or label mapping without thresholds
-  that can't decide whether a 1-point move is noise.
+  correct rows, **one count per model**. That catches a changed checkpoint, tokenizer or label
+  mapping without thresholds that can't decide whether a 1-point move is noise. The intervals are
+  for humans reading CLAUDE.md, not for the gate.
 - `samples/` is already in the Stop hook's fingerprint, so edits to the eval set re-run the gates.
 
 ### B. Filter the results table
