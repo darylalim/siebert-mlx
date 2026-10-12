@@ -498,6 +498,24 @@ silent, plausible, wrong. `except ValueError` can't catch it, because nothing fa
     generated column is touched. Revisit only if a user reports it.
   - **Rejected: always write commas.** No new state, but the download would open as one column in
     the same Excel that produced the input, which turns a fixed reading bug into a writing bug.
+- **The byte-order mark (BOM): check first, then mirror it like the delimiter (added
+  2026-10-12).**
+  - **Today's behaviour (checked 2026-10-12):** `pd.read_csv` strips a UTF-8 BOM on read, and
+    `to_csv` writes none. So a file from Excel's "CSV UTF-8" export loses its BOM in the download.
+  - **Why it might matter:** Excel has historically needed the BOM to open a CSV as UTF-8;
+    without it, non-ASCII text (accents, emoji, curly quotes) comes out garbled. Whether current
+    Excel for Mac and Windows still behave this way is **not verified**.
+  - **Check first:** open a non-ASCII CSV in Excel with and without a BOM, on whatever Excel is
+    available, and record the result. None of the samples exercise this: only `blank_cells.csv`
+    has non-ASCII bytes (3), and no sample has a BOM, so build the test file by hand.
+  - **If Excel garbles the BOM-less file:** detect the BOM from the first bytes already read for
+    `_detect_delimiter` (`head.startswith(b"\xef\xbb\xbf")`), store it with the loaded data as
+    `source_bom`, handled exactly like `source_sep` (`_load_sample` sets `False`, `_clear_data()`
+    pops it, `.get("source_bom", False)` for older sessions), and write it back by encoding the
+    download as `utf-8-sig`. Files without a BOM stay byte-identical to today, so nothing changes
+    for pandas, scripts or any non-Excel user.
+  - **If Excel opens both correctly:** do nothing, and record the result in the decisions file so
+    the question isn't reopened.
 
 ### Tests
 
@@ -512,6 +530,10 @@ silent, plausible, wrong. `except ValueError` can't catch it, because nothing fa
   removing the file and after a failed read; a hand-seeded session with `df` but no `source_sep`
   downloads with commas instead of raising. **Mutation-test** by dropping `sep=` from the
   download: the semicolon test must fail.
+- **BOM (only if the check says to mirror it):** a BOM upload downloads starting with
+  `\xef\xbb\xbf` and a BOM-less upload without it; Sample has none; `source_bom` is cleared on the
+  same three paths as `source_sep`. **Mutation-test** by always writing `utf-8`: the BOM test must
+  fail.
 
 ### Commit
 
@@ -1089,6 +1111,37 @@ Each lands in phase 1 for sentiment + emotion and is extended by phase 2 for top
   and `ruff format --check` formats any Python fences in them.
 - **This plan's own Docs sections** ("CLAUDE.md: …" in 0A, 0B, 0C and Phase 1) follow the split:
   rules into CLAUDE.md, measurements into the matching decisions file.
+
+### H. Excel download (later, only if users ask; added 2026-10-12)
+
+Not scheduled in any phase. The app stays CSV in, CSV out; this records the one extra output
+format with a real case, so it isn't re-derived from scratch.
+
+- **What it would fix:** both CSV-in-Excel problems at once.
+  - The decimal limit recorded in 0D: Excel stores numbers as numbers, so `0.9876` can't be read
+    as text in a comma-decimal locale, and the confidence columns could carry a percent format.
+  - Encoding: an `.xlsx` has no BOM question.
+- **Placement:** an entry in the Results header's `Exports` popover (Phase 0B, rule 3), never a
+  header button, so it costs no header width. Same lazy `data=` callable and `on_click="ignore"`,
+  its own key, file named `<source>.xlsx`. The CSV Download stays the one-click default.
+- **Content:** exactly the CSV download's columns and order. Phase 1's filtered (B) and summary
+  (D) exports stay CSV-only unless asked for too.
+- **Costs to settle before building it:**
+  - **A new dependency** (`openpyxl`, or `xlsxwriter` for write-only, which is faster). Check the
+    `uv tree` impact; neither is installed today.
+  - **Speed on large files.** The file is built when the user clicks, so a slow write stalls the
+    click. Time it at E's `WARN_ROWS` and `MAX_ROWS` with `scripts/benchmark.py` (C). If it's
+    slow, hide the entry above a row count, or say in its label that it may take a while.
+  - **Excel's own limits:** 1,048,576 rows per sheet, and 32,767 characters per cell. E's
+    40,000-character pre-slice applies only to what the model reads, so a longer source cell
+    would be truncated in the `.xlsx`. Decide between truncating with a notice and hiding the
+    entry for such files; never truncate silently.
+  - **What it can't do:** since input stays CSV-only, an Excel user's sheets, formatting and
+    formulas never reach the app, so this is "results in Excel format", not a round trip of their
+    workbook. Say so in the entry's `help=`.
+- **Tests, if built:** the workbook reads back with `pd.read_excel` equal to the CSV download's
+  frame; the confidence cells are numeric, not strings; the entry is absent in the all-blank arm,
+  like D; the over-long-cell rule.
 
 ## Storage (agreed 2026-10-12)
 
