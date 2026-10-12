@@ -5,14 +5,18 @@ Status: **drafted 2026-10-12, not started.** Implement in a fresh session; read 
 
 Four phases, each merged before the next starts:
 
-0. **Complementary light and dark themes (0A) and an adaptive layout (0B).** Designed below; 0B starts with measurement spikes.
-1. **Emotion detection.** Designed in full below, and ready to implement.
+0. **Complementary light and dark themes (0A), an adaptive layout (0B), and pinned models with a
+   private, offline-capable setup (0C).** Designed below; 0B starts with measurement spikes.
+1. **Emotion detection.** Designed in full below, and ready to implement. Adds large-file limits
+   (cross-cutting E).
 2. **Topic clusters.** Outline only; see "Later phases".
 3. **LLM explanations and aspects.** Outline only; see "Later phases".
 
+Between Phases 1 and 2, **non-English detection** (cross-cutting F) ships as its own release.
+
 ---
 
-# Phase 0: themes and adaptive layout
+# Phase 0: themes, adaptive layout, pinned and private
 
 ## Phase 0A: complementary light and dark themes (designed 2026-10-12)
 
@@ -154,13 +158,13 @@ Ripples to handle in the same commit:
 - **Screenshot:** optionally add a light capture (`color_scheme="light"` in
   `docs/capture_screenshot.py`). CLAUDE.md records that a light shot was deliberately dropped on
   2026-08-15, so this is a choice to revisit, not an omission to fix.
-- **Version:** Phase 0 (themes **and** the adaptive layout below) ships together as **0.8.0**.
-  Phase 1 then becomes **0.9.0**; the commit-9 wording below is updated to match.
+- **Version:** Phase 0 (themes, the adaptive layout **and** 0C below) ships together as **0.8.0**.
+  Phase 1 then becomes **0.9.0**; the commit-10 wording below is updated to match.
 - **Commits:**
   - T1: `feat(ui): add a light theme that mirrors the dark one`. Covers the config, `POSITIVE_COLOR`
     and the tint literal, `test_theme.py`, and the measured comments.
   - T2: `docs: document the paired themes`.
-  - The version bump moves to the end of Phase 0B (L5).
+  - The version bump moves to the end of Phase 0C (P4).
 
 ## Phase 0B: a layout that adapts to different displays (designed 2026-10-12)
 
@@ -182,7 +186,7 @@ Ripples to handle in the same commit:
 
 | Tier | Width | Real devices | Target |
 |---|---|---|---|
-| Phone (LAN only) | 320–767 | iPhone 375–430 | **Works**: no page-level horizontal scroll, everything reachable. Not optimized |
+| Phone (LAN only, opt-in per 0C) | 320–767 | iPhone 375–430 | **Works**: no page-level horizontal scroll, everything reachable. Not optimized |
 | Compact | 768–1099 | half-screen windows on a MacBook, iPad | **Good**: nothing clipped; the table may scroll horizontally |
 | Laptop | 1100–1727 | MacBook built-in screens: 1512 (14"), 1728 (16") | **Primary design target**: Sample results fit with no table scroll, sidebar open |
 | Desktop | 1728–2559 | 1920 / 2560 external monitors | **Good**, no dead space |
@@ -278,7 +282,7 @@ sidebar open.
 - **L5. Docs and release:**
   - CLAUDE.md: replace the geometry and overflow numbers with L1's matrix, add the display tiers
     and the five rules, and update the phone note in the layout bullet.
-  - Then `chore: bump version to 0.8.0` for all of Phase 0.
+  - The `chore: bump version to 0.8.0` for all of Phase 0 comes after 0C (P4).
 
 ### What stays as it is
 
@@ -287,6 +291,118 @@ sidebar open.
 - Phones keep the known cost that the sidebar stays open over the results until closed by hand.
   Streamlit 1.64 has no API to close it, and moving inputs into the main area for phones would need
   the viewport width the server doesn't have.
+
+## Phase 0C: pinned models, privacy and offline use (designed 2026-10-12)
+
+Two small changes that touch loading and config rather than the UI. They land in Phase 0 because
+Phase 1 adds a second model, and both are cheaper to establish with one model than to retrofit
+across two.
+
+### P1. Pin every model to a commit SHA
+
+- **Why:** `load_model` resolves `main` **three times**, independently: `AutoConfig`,
+  `snapshot_download` (inside `_ensure_safetensors`) and `AutoTokenizer`. So:
+  - an upstream push changes predictions on the next launch with no change in this repo, and
+    nothing records which checkpoint produced a downloaded CSV;
+  - a push landing between the three calls could even mix revisions in one load (unlikely, but
+    nothing prevents it).
+  - CLAUDE.md's CI note already pays for this: the hub cache key's `-v1` suffix has to be bumped
+    by hand "if upstream moves `main`", and no one is told when it does.
+- **Today's SHAs (checked 2026-10-12 via the Hub API, matching the cache's `refs/main`):**
+  - `siebert/sentiment-roberta-large-english` → `74cea614e245b0832c770ec9aa51bd58df965b9c`
+    (upstream last modified 2024-06-11);
+  - `j-hartmann/emotion-english-distilroberta-base` → `0e1cd914e3d46199ed785853e12b57304e04178b`
+    (2023-01-02), pinned in Phase 1 commit 3.
+- **Design:**
+  - A module-level `SENTIMENT_MODEL = ModelRef(repo, revision)` NamedTuple (Phase 1 adds
+    `EMOTION_MODEL`; Phase 1's `_load_classifier` takes a `ModelRef`).
+  - Pass `revision=` to **all three** calls. `_ensure_safetensors` takes it as a required
+    argument, the same "required, so `ty` flags every missed call site" reasoning as
+    `_render_results`' generated pair.
+- **Spike results (2026-10-12, warm cache, `huggingface_hub` 1.32.0):**
+  - With the SHA pinned, all three calls succeed **offline** and return the same snapshot folder.
+  - A wrong SHA fails all three loudly offline (`OSError` / `OfflineModeIsEnabled`), never falling
+    back to `main`.
+  - Online, a pinned load still makes Hub requests: 0.68 s against 1.36 s for `main`. **Pinning is
+    not an offline mode;** P3 is.
+- **Tests:**
+  - Unit: each revision is a 40-character lowercase hex SHA, never a branch name. Mutation-test it
+    with `"main"`.
+  - Unit: the patched `AutoConfig`, `snapshot_download` and `AutoTokenizer` each receive the same
+    `revision=`. Mutation-test by dropping it from one call.
+  - `conftest.py`'s module-level `snapshot_download` mock must accept the new keyword.
+- **CI cache key:** derive it from the pins instead of `-v1`, so a pin bump busts the cache by
+  itself and the manual suffix retires (Phase 1 commit 8 then needs no bump):
+  ```yaml
+  key: hf-hub-${{ runner.os }}-${{ steps.pins.outputs.hash }}
+  ```
+  Keying on `hashFiles('streamlit_app.py')` would bust it on every code edit. **Where
+  `steps.pins` gets the hash (decide in implementation):**
+  - a step that greps the `ModelRef(...)` lines into `$GITHUB_OUTPUT` and keys on that (no new
+    file; `actionlint` checks the step), **or**
+  - a `models.lock` text file that the app reads (one source, but a second file the app depends
+    on).
+  - Recommendation: the grep step, plus a unit test that the pattern it greps still matches every
+    `ModelRef`, so a reformatted line can't silently empty the key.
+- **Updating a pin** (document in CLAUDE.md as a procedure): change the SHA, run
+  `pytest --integration` (the pinned confidences will move if the weights did), re-run
+  `scripts/eval_quality.py` (A) and record the numbers, then commit as `build(models): ...`.
+- **Knock-on edits in this plan:**
+  - S1's "still resolves the current `main` revision, so a new upstream revision is still picked
+    up" becomes "resolves the pinned revision".
+  - S2's stale revisions now arise only from a deliberate pin bump.
+  - The last Risks bullet (upstream adding `model.safetensors` skips the conversion automatically)
+    now needs a pin bump to take effect.
+
+### P2. Private by default
+
+- **Streamlit's usage statistics.** `browser.gatherUsageStats` defaults to **true** (checked on
+  1.64.0), so the browser reports usage events to Streamlit. Set `[browser] gatherUsageStats =
+  false` in `.streamlit/config.toml`.
+- **Network exposure.** `server.address` defaults to unset, which **binds every interface**: anyone
+  on the same Wi-Fi can open the app, upload files and use this Mac's GPU. Each session's data
+  stays separate, but the exposure is still surprising for a local tool. **Decision for the user
+  at implementation:**
+  - **Recommended:** `[server] address = "localhost"`. Phone testing (0B's phone tier) then opts in
+    per run with `--server.address 0.0.0.0`, documented in the README and in 0B's L1 notes.
+  - Alternative: keep the default and document it.
+- **Hugging Face telemetry.** Check what `huggingface_hub` / `transformers` send beyond the
+  downloads themselves (the user-agent string and any `send_telemetry` calls) on the locked
+  versions. If anything, set `HF_HUB_DISABLE_TELEMETRY=1` in `load_model` before the first call.
+  Don't assume either way.
+- **Config and tests:**
+  - The config file's header comment ("Dark mode only…") is already rewritten by 0A. Give
+    `[browser]` / `[server]` their own comments.
+  - `test_every_key_is_a_streamlit_option` already validates every section, not only the theme.
+  - Add `TestPrivacy` to `tests/test_theme.py`: `gatherUsageStats` is false, and (if chosen)
+    `server.address` is `localhost`. Renaming the file to `test_config.py` would be more accurate,
+    but CLAUDE.md cites `test_theme.py` throughout; leave it.
+
+### P3. Offline mode, and the claim that nothing leaves the machine
+
+- **It already works:** with a warm cache, `HF_HUB_OFFLINE=1 uv run streamlit run
+  streamlit_app.py` loads with no network (spike above: 0.06 s for the three calls). Document it
+  rather than build it.
+- **Cold cache under offline mode** fails in `load_model` with an `OSError` and a traceback. Catch
+  it at the call site and show an `st.error` naming the fix ("run once online to download the
+  model, about 1.4 GB"), so the page body still renders. Pin it with a flow test that raises from
+  the patched loader.
+- **Verify the README claim before writing it.** Run the app under Playwright with
+  `HF_HUB_OFFLINE=1` and `gatherUsageStats=false`, go through upload → Classify → Download, and
+  record **every** browser request. The claim holds only if every host is `localhost`. Fonts,
+  icons and Vega are expected to be bundled, but check. Reuse L1's harness.
+- **README wording** (only after that check): "After the first run downloads the model, the app
+  works offline (`HF_HUB_OFFLINE=1`). Your text is processed on this Mac and is never sent
+  anywhere."
+
+### P4. Docs and release
+
+- CLAUDE.md: the `load_model` architecture item (revisions), the CI cache-key note (it's derived
+  now), a new privacy bullet (the two config keys and why), and the pin-update procedure.
+- README: offline use, the privacy sentence, and how to open it from a phone.
+- `chore: bump version to 0.8.0` for all of Phase 0.
+- **Commits:** P1 `feat: pin model revisions` (with the CI key), P2 `feat: private by default`,
+  P3 `feat: offline mode` (the cold-cache error), then docs and the bump.
 
 ---
 
@@ -402,7 +518,7 @@ Order matters. Land the refactor **first, with the existing suite unchanged and 
 
 ## CI / release
 
-- **Bump the `integration` job's hub cache key suffix `-v1` → `-v2`.** The key is exact and static, so the existing cache hits, never saves, and without the bump every run would re-download and re-convert the emotion checkpoint.
+- **No manual cache-key bump.** Since 0C (P1), the `integration` job's hub cache key is derived from the pinned revisions, so adding `EMOTION_MODEL` in commit 3 changes the key by itself. Before 0C, the exact static key would have hit, never saved, and re-downloaded and re-converted the emotion checkpoint on every run. Confirm on the first green run that the new key saves a cache containing both models.
 - Bump `[project].version` to `0.9.0` (Phase 0 ships as 0.8.0) **only in the final commit, once everything is green**. The `release` job publishes a GitHub Release as soon as a bumped version lands green on `main`.
 
 ## Docs
@@ -418,13 +534,14 @@ Order matters. Land the refactor **first, with the existing suite unchanged and 
 0. `chore: add scripts/benchmark.py` (C) and record the SiEBERT-only baseline **before anything else changes**.
 1. `refactor: extract _load_classifier, _valid_sorted, _classify_texts`: no behaviour change; the existing suite passes unmodified.
 2. `perf: fetch pytorch_model.bin only when no converted safetensors exists` (S1) + tests. Before the emotion model, so both checkpoints benefit. Record the disk saved.
-3. `feat: load the emotion model and add add_emotions` + unit tests.
+3. `feat: load the emotion model and add add_emotions` + unit tests. Adds `EMOTION_MODEL` with its pinned SHA (0C, P1).
 4. `feat(ui): render emotion columns and distribution` + state, guard, flow tests.
-5. `feat(ui): sidebar filters for sentiment and emotion` (B) + flow tests.
-6. `feat(ui): summary export` (D) + the shared counts helper.
-7. `test: add the labeled eval set and pin emotion inference against the real checkpoint` (A) + CI cache-key bump. The user reviews the labels before this lands.
-8. `docs: emotion detection; disk usage (S2, S5); re-measure grid geometry; recapture screenshot; record eval, benchmark and per-tab memory numbers (S3)`.
-9. `chore: bump version to 0.9.0` + the repo description and topics below, **in the same commit**, so no copy advertises emotion detection before it's on `main`.
+5. `feat: large-file limits` (E): the live ETA, the row ceiling, the character pre-slice, + tests. After commit 4, so the limits are set against the two-model cost.
+6. `feat(ui): sidebar filters for sentiment and emotion` (B) + flow tests.
+7. `feat(ui): summary export` (D) + the shared counts helper.
+8. `test: add the labeled eval set and pin emotion inference against the real checkpoint` (A). The user reviews the labels before this lands.
+9. `docs: emotion detection; large-file limits; disk usage (S2, S5); re-measure grid geometry; recapture screenshot; record eval, benchmark and per-tab memory numbers (S3)`.
+10. `chore: bump version to 0.9.0` + the repo description and topics below, **in the same commit**, so no copy advertises emotion detection before it's on `main`.
 
 ### Repo description and topics (at release)
 
@@ -437,11 +554,11 @@ README line 8 (the sentence under the badges), and GitHub's About.
     columns to your data." The README's copy links SiEBERT to its model card.
   - GitHub topics: added `nlp`, `huggingface`, `csv`, `macos`, `on-device-ai`, `python`, for 14 in
     total.
-- **In commit 9, set all three to:**
+- **In commit 10, set all three to:**
   > Classify the sentiment and emotion of English text in CSV files, locally on Apple Silicon. A
   > Streamlit app running SiEBERT and an emotion model with MLX that adds labels and confidence
   > scores to your data.
-- **Update GitHub** only *after* commit 9 is merged and green, since it's outward-facing:
+- **Update GitHub** only *after* commit 10 is merged and green, since it's outward-facing:
   ```bash
   gh repo edit darylalim/siebert-mlx --description "<text above>" \
     --add-topic emotion-detection,emotion-recognition
@@ -603,12 +720,103 @@ Each lands in phase 1 for sentiment + emotion and is extended by phase 2 for top
   - Use the resolved column names as `dimension`.
 - **Mechanics:** an `st.download_button` inside the Results header's `Exports` popover (Phase 0B,
   rule 3), with the same lazy `data=` callable and `on_click="ignore"`, and its own key (e.g.
-  `download_summary`). Name the file `<source>_summary.csv`. This commit (6) is where the popover
+  `download_summary`). Name the file `<source>_summary.csv`. This commit (7) is where the popover
   first appears; until then the header holds `Download` alone.
 - **Not in the all-blank arm:** there is nothing to summarize there.
 - **Single source of truth:** compute the counts in one helper shared with the metric cards and the
   charts, so the export can never disagree with what's on screen. Pin that with a test comparing
   the two.
+
+### E. Large-file limits (Phase 1, commit 5)
+
+- **Why:** nothing caps a file today. Each phase multiplies the per-row cost (SiEBERT is 24 layers,
+  emotion adds 6, Phase 2 adds embeddings), and the only feedback during a long run is a progress
+  bar with no time on it. A file too big for this Mac fails late: after the upload, or partway
+  through a run whose results are then lost.
+- **Limits that exist already (checked on 1.64.0):**
+  - `server.maxUploadSize` = 200 MB: the uploader refuses larger files itself.
+  - `server.maxMessageSize` = 200 MB: one websocket message. The whole-file preview and the
+    results table are each sent as one Arrow payload, measured at 40.2 MB for 150k rows (CLAUDE.md,
+    preview bullet). Above 150k rows Streamlit switches to lazy loading by itself. **Check** that
+    lazy loading keeps a 200 MB CSV's grid under the message limit; don't assume it.
+- **Design, in order of value:**
+  1. **A live ETA in the progress bar.** `st.progress(value, text=...)`, with "Classifying 1,240
+     of 10,000 rows, about 3 min left" estimated from elapsed time per row so far. That's
+     machine-independent, unlike a rows/s constant from the M2 Max. Because of the length sort,
+     short rows go first and an early estimate runs **optimistic**: estimate from **characters**
+     done against characters total, not rows. Pin with a unit test using a fake clock.
+  2. **A pre-run estimate for big files.** Above `WARN_ROWS` (set from C's benchmark: roughly
+     where a run passes ~2 minutes), the sidebar shows an `st.caption` under Classify: "~N min
+     for this file", from C's measured chars/s. Only above the threshold, since small files need
+     no warning. It's labeled approximate and quotes the benchmark machine.
+  3. **A hard row ceiling, `MAX_ROWS`, only where something actually breaks.** Set it from
+     measurement: the row count where per-tab memory (S3: `df` + `result_df` + the models)
+     or the message limit fails on a 16 GB Mac, which is the smallest the README should promise.
+     Above it, the `else` arm shows an `st.warning` with the count and the limit, and Classify is
+     disabled (Reset stays). **Don't** set a ceiling for time alone: a slow run the user chose is
+     their call, which is what the ETA is for.
+  4. **Pre-slice very long cells to 40,000 characters** before tokenizing. A fast tokenizer
+     tokenizes the **whole** string and only then truncates to 512 tokens, so a 5 MB cell costs
+     5 MB of tokenization to keep ~2 KB.
+     - **Why 40,000 is safe:** the longest token in both vocabularies is 66 characters (measured
+       2026-10-12), so 510 content tokens span at most 33,660 characters. A cut beyond that can't
+       change the first 510 tokens. The margin covers the pre-tokenizer's whitespace lookahead at
+       the cut.
+     - **Prove it:** a unit test with the real tokenizer encodes long texts (including one with
+       a cut inside a word and one inside a whitespace run) both ways, and compares `input_ids`
+       bitwise. The constant and the 66 go in a comment.
+     - Measure the saving on one 1 MB cell first; if it's negligible, drop this item.
+- **Cancel:** Streamlit already stops a running script when the user clicks any widget, or Stop in
+  the main menu. The interruption lands at the next `st` call, i.e. the next `progress_bar.progress`.
+  **Spike:** confirm a sidebar click mid-run stops within one batch, and that no `result_*` key is
+  half-written (they're written together after the loop, so it should hold). If both hold, document
+  it and add no button. If they don't, `_clear_results()` before the run starts.
+- **Tests:** the ETA text (fake clock), the warning-and-disabled-Classify arm above `MAX_ROWS`
+  (hand-seeded frame, no real classify), the caption appearing only above `WARN_ROWS`, the
+  pre-slice parity test.
+- **Docs:** CLAUDE.md records the measured `WARN_ROWS` / `MAX_ROWS` and how they were set; the
+  README states the limit.
+
+### F. Non-English input (its own release between Phase 1 and Phase 2)
+
+- **Why:** everything that reads the text (SiEBERT, the emotion model and, in Phase 2, the
+  English keyword labels) is English-only, and none of it fails on other languages: each returns a label with a confidence,
+  often a high one. A mixed-language file gets silently plausible, meaningless rows.
+- **Behavior: flag, never skip.**
+  - Skipping would blank the prediction, which already means "this cell was empty". The
+    `Skipped` card and the blank-text rules would then mean two things.
+  - Instead, add a `Language` column (ISO 639-1 code: `en`, `es`, …), plus a conditional
+    `Not English` metric card that renders only when the count is non-zero, the same pattern as
+    `Skipped`.
+  - Predictions on flagged rows are kept. The filters (B) gain a language filter, and the summary
+    export (D) a `language` dimension, so a user can exclude them in one click.
+- **Naming and layout:**
+  - `Language` goes through `_generated_columns`' collision rule like every generated column
+    (`Language (model)` if the file has one).
+  - It's **not pinned** (it isn't a prediction the user came for), so it costs nothing against
+    0B's 360 px pinned budget.
+- **Detector (spike decides, three candidates):**
+
+| Option | Runs on | Size | Notes |
+|---|---|---|---|
+| `papluca/xlm-roberta-base-language-detection` (pinned `9865598…`) | **MLX**, via `mlx-transformers`' `xlm_roberta.py` | 278M params, ~0.56 GB fp16 | MIT license; ships `model.safetensors`, so **no `.bin` conversion**; 20 languages, so anything else is forced into one of them (still "not English") |
+| `lingua-language-detector` | Rust, CPU | No download; memory depends on mode | Strong on short text; not MLX, so it would go in the non-MLX table |
+| A script heuristic (share of non-Latin letters) | Python | None | Catches Chinese/Arabic/Cyrillic and misses Spanish, French, German. Too weak alone |
+
+  - **Recommendation:** the XLM-R model, for consistency (all inference on MLX, one loader path
+    via `_load_classifier` and a `ModelRef`), unless the spike shows a false-positive problem.
+  - **The metric that matters is false positives on English:** run it over every `samples/*.csv`
+    (all English, ~230 rows including slang, emoji and app-store shorthand). Each English row it
+    flags is a wrong warning on the user's data. Also measure it on a small non-English set.
+  - **Short texts** ("ok", "lol", "10/10") are where every detector is weakest. Flag a row only
+    when the top language isn't `en` **and** its probability clears a threshold picked from the
+    spike; below the threshold, write `en`. Record the threshold and why.
+- **Data:** `samples/non_english.csv`, ~20 rows across 5–6 languages plus 5 English controls, for
+  the flow tests and the spike. Hand-written, and kept apart from `labeled_eval.csv` (A).
+- **Cost:** another full pass (12 layers, base size): benchmark it (C) and give it its own budget
+  (≤ +20% over Phase 1). Disk +0.56 GB, memory +0.56 GB.
+- **Release:** its own minor version after Phase 1's 0.9.0 (0.10.0), with the README feature list
+  and the description left unchanged (it's a guard, not a headline feature).
 
 ## Storage (agreed 2026-10-12)
 
@@ -641,6 +849,7 @@ Measured on the dev machine on 2026-10-12, with `huggingface_hub` 1.32.0.
 |---|---|---|
 | Today | 2.84 GB (SiEBERT `.bin` + converted copy) | ~0.7 GB weights |
 | 1. Emotion | +0.63 GB → 0.31 GB once S1 lands | +0.16 GB |
+| F. Language | +0.56 GB (XLM-R, already safetensors, no conversion) | +0.56 GB |
 | 2. Topics | +0.34 GB (4-bit) to +1.2 GB (bf16) | similar |
 | 3. LLM | +6 GB (9B 4-bit); +3 GB more if the 4B fallback is also cached | +6 GB, only after the first click |
 
@@ -651,8 +860,8 @@ Measured on the dev machine on 2026-10-12, with `huggingface_hub` 1.32.0.
     `config.json` in one call, so the 1.4 GB `.bin` must stay in the cache or it is re-downloaded
     on every launch.
   - **Change:** split `_ensure_safetensors` into two downloads.
-    1. First, `allow_patterns=["config.json", "model.safetensors"]`. This is cheap, and it still
-       resolves the *current* `main` revision, so a new upstream revision is still picked up.
+    1. First, `allow_patterns=["config.json", "model.safetensors"]`. This is cheap, and it
+       resolves the **pinned** revision (0C, P1), so a pin bump is still picked up.
     2. Only if `model.safetensors` is then missing from that snapshot folder, download
        `pytorch_model.bin`, convert it, and atomically replace as today.
   - The keep-the-file-permissions logic and the `exists()` guard are unchanged.
@@ -667,10 +876,11 @@ Measured on the dev machine on 2026-10-12, with `huggingface_hub` 1.32.0.
       the two-step order, including that `.bin` is **never requested** when the converted file
       exists. That's the real fix, so mutation-test it.
     - `conftest.py`'s module-level `snapshot_download` mock must handle both calls.
-    - Re-check that the CI `integration` cache (key bumped in commit 7) still covers this.
-  - **Behaviour across a new upstream revision:** the new snapshot folder has no converted file,
+    - Re-check that the CI `integration` cache (its key now derived from the pins, 0C P1) still covers this.
+  - **Behaviour across a pin bump (0C, P1):** the new snapshot folder has no converted file,
     so step 2 downloads the `.bin` and converts once, and the previous revision's folder is left
-    behind. That's how the stale `a22773d…` copy got there. Covered by S2.
+    behind. That's how the stale `a22773d…` copy got there (back when `main` moved upstream).
+    Covered by S2.
 - **S2. Stale revisions:** **document, don't automate.** The cache is the user's and is shared with
   other tools.
   - The README gets a "Disk usage" note: how to measure (`hf cache scan`) and how to delete
@@ -748,4 +958,4 @@ of these without a plan of its own:
 - **Accuracy is modest:** 66% on the card's own balanced 7-class eval (chance is 14%). The training data is Twitter, Reddit, self-reports and TV dialogue, so product and app reviews are out of domain. Show the confidence rather than hiding it, and consider wording the help text as "likely emotion".
 - **Disagreements are expected, not bugs.** SiEBERT is positive/negative only, so `positive` + `neutral` or `negative` + `surprise` will be common. Do not "reconcile" the two outputs. A later phase could use those disagreements as a "review these rows" filter.
 - **No license declared** on the model card (`cardData.license` is absent, which is also true of SiEBERT). The app downloads it at runtime rather than redistributing it, so its status is the same as today's. Note it in the README.
-- Upstream ships only `pytorch_model.bin` (plus `tf_model.h5`, which `allow_patterns` already excludes). If upstream ever adds `model.safetensors`, the conversion is skipped automatically.
+- Upstream ships only `pytorch_model.bin` (plus `tf_model.h5`, which `allow_patterns` already excludes). If upstream ever adds `model.safetensors`, the conversion is skipped once the pin (0C, P1) is bumped to that revision; until then nothing changes.
