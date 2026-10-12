@@ -678,7 +678,9 @@ Keep `process_dataframe`'s 2-tuple contract **unchanged**, so the existing unit 
 - **Copy:**
   - Text-column `help=`: "…for sentiment and emotion classification…". Keep the 512-token note; it's the only place the UI states it.
   - Get started card: mention emotions.
-  - The title stays "SiEBERT MLX".
+  - The title becomes **"MLX Text Analyzer"**: `page_title` and `st.title`, plus the title
+    assertion in `tests/test_app_flow.py`. It changes here, not in commit 11, so that commit 10's
+    screenshot recapture shows the new title (see "Repo name").
 - **All-blank arm:** no change. Emotion columns are blank on exactly the same rows, because both passes use the same `_valid_sorted`.
 
 ### 5. Geometry: must re-measure
@@ -730,13 +732,13 @@ Order matters. Land the refactor **first, with the existing suite unchanged and 
 2. `feat: add the labeled eval set and scripts/eval_quality.py` (A) + `EMOTION_MODEL` with its pinned SHA (0C, P1), **then the go/no-go decision**. Lands in three steps the user gates: the labeling guide is agreed, then the user reviews every drafted label, then the κ re-label. Then run the eval and apply A's go/no-go rule. **On a no-go, stop here and bring the numbers to the user;** what happens to commits 3–11 then is set out in "If emotion is a no-go" below.
 3. `perf: fetch pytorch_model.bin only when no converted safetensors exists` (S1) + tests. Before the emotion model is loaded by the app, so both checkpoints benefit. Record the disk saved.
 4. `feat: load the emotion model and add add_emotions` + unit tests.
-5. `feat(ui): render emotion columns and distribution` + state, guard, flow tests.
+5. `feat(ui): render emotion columns and distribution` + state, guard, flow tests, + §4's copy changes, including the title "MLX Text Analyzer".
 6. `feat: large-file limits` (E): the live ETA, the row ceiling, the character pre-slice, + tests. After commit 5, so the limits are set against the two-model cost.
 7. `feat(ui): sidebar filters for sentiment and emotion` (B) + flow tests.
 8. `feat(ui): summary export` (D) + the shared counts helper.
 9. `test: pin the eval counts against the real checkpoints` (A's gate), from CI as well as locally.
 10. `docs: emotion detection; large-file limits; disk usage (S2, S5); re-measure grid geometry; recapture screenshot; record eval, benchmark and per-tab memory numbers (S3)`, within G's budget.
-11. `chore: bump version to 0.9.0` + the repo description and topics below, **in the same commit**, so no copy advertises emotion detection before it's on `main`.
+11. `chore: bump version to 0.9.0` + the repo description and topics below + the rename to `mlx-text-analyzer` (see "Repo name" below), **in the same commit**, so no copy advertises emotion detection before it's on `main`.
 
 ### If emotion is a no-go (added 2026-10-12)
 
@@ -754,7 +756,7 @@ A no-go must not silently cancel it.
 | 8 (D) | No | Ships with the sentiment dimension only |
 | 9 (A's gate) | No | Ships, pinning SiEBERT's count only |
 | 10 | No | Docs for what shipped |
-| 11 | No | Bumps to 0.9.0; the repo description and topics stay as they are, since nothing new is advertised |
+| 11 | No | Bumps to 0.9.0; the repo description, topics and **name** stay as they are, since nothing new is advertised and the app still runs SiEBERT alone |
 
 - **This is the default only if the user chooses to drop emotion.** If they pick another option
   from A's no-go list instead (the RoBERTa-large model, a smaller label set), commit 2 is re-run
@@ -785,6 +787,52 @@ README line 8 (the sentence under the badges), and GitHub's About.
   That gives 16 topics, under GitHub's 20.
 - **Later phases:** add `topic-modeling` with Phase 2 and `llm` with Phase 3, each in that phase's
   release commit. Don't add them before the phase ships.
+
+### Repo name (at release; added 2026-10-12)
+
+**Rename `siebert-mlx` → `mlx-text-analyzer` in commit 11, on a go only** (decided with the user,
+2026-10-12). `siebert-mlx` is accurate until emotion ships. After that SiEBERT is one model of
+several, and Phases 2–3 add more. `mlx-` follows the MLX ecosystem's naming (`mlx-lm`, `mlx-vlm`,
+`mlx-embeddings`), and "text analyzer" covers every planned phase, where "sentiment" or "review"
+would not. Same rule as the description: don't rename before the scope it describes is on `main`.
+
+- **In commit 11** (found with `git grep -i 'siebert-mlx'` on 2026-10-12; re-run it then, since
+  phases 0–1 may add more):
+  - `pyproject.toml` `name`, then `uv lock` **in the same commit**: CI's `uv sync --frozen` fails on
+    a lock that still names the old project.
+  - README lines 3–5: the CI, release and license badge URLs.
+  - CLAUDE.md line 7: ``**SiEBERT MLX** (`siebert-mlx`)`` becomes
+    ``**MLX Text Analyzer** (`mlx-text-analyzer`)``.
+  - README line 1 (`# SiEBERT MLX`) and line 10 (the screenshot's alt text) become "MLX Text
+    Analyzer".
+  - The `gh repo edit` command above, if it is run after the rename.
+  - Optional, cosmetic: `tests/conftest.py`'s `TemporaryDirectory(prefix="siebert-mlx-test-snapshot-")`.
+- **The display name follows the repo: "MLX Text Analyzer"** (decided with the user, 2026-10-12).
+  The reason for the rename applies equally to the title: once emotion ships, a title naming one
+  model undersells the app. A visitor to `mlx-text-analyzer` would also see a README headed
+  "SiEBERT MLX" and read it as a fork or a half-finished rename. SiEBERT keeps its credit where
+  models are credited: the description names it and links its model card, and the license table
+  (J) lists it. **The title changes in two commits, because the screenshot shows it:**
+  - **Commit 5:** `page_title` and `st.title` in `streamlit_app.py` and the assertion in
+    `tests/test_app_flow.py` (§4's copy list). Commit 5 comes after the go/no-go, so on a no-go
+    the title never changes, the same as the repo name.
+  - **Commit 10** recaptures the screenshot, which then shows the new title. A title changed only
+    in commit 11 would ship a README whose screenshot shows the old one, and `git grep` can't see
+    text inside an image.
+  - **Commit 11:** the README heading and alt text and CLAUDE.md line 7, with the repo rename.
+  - Between commits 5 and 11 the app's title is ahead of the repo name. That's harmless: the
+    title doesn't mention emotion, so it advertises nothing that isn't on `main`.
+- **On GitHub, only after commit 11 is merged and green** (outward-facing, like the description).
+  Run the description and topics edit first, then:
+  ```bash
+  gh repo rename mlx-text-analyzer -R darylalim/siebert-mlx --yes
+  git remote set-url origin https://github.com/darylalim/mlx-text-analyzer.git
+  ```
+  GitHub redirects the old URL, git remotes included, until someone creates a new repo named
+  `siebert-mlx`. Tags and releases move with the repo. The README badges still need the new path
+  rather than relying on the redirect.
+- **Local folder:** renaming the clone directory is optional. It moves Claude Code's per-project
+  memory directory, which is keyed on the path, so copy `memory/` across if you do.
 
 ---
 
