@@ -5,10 +5,11 @@ Status: **drafted 2026-10-12, not started.** Implement in a fresh session; read 
 
 Four phases, each merged before the next starts:
 
-0. **Complementary light and dark themes (0A), an adaptive layout (0B), and pinned models with a
-   private, offline-capable setup (0C).** Designed below; 0B starts with measurement spikes.
-1. **Emotion detection.** Designed in full below, and ready to implement. Adds large-file limits
-   (cross-cutting E).
+0. **A slimmer CLAUDE.md (G, first), complementary light and dark themes (0A), an adaptive layout
+   (0B), and pinned models with a private, offline-capable setup (0C).** Designed below; 0B starts
+   with measurement spikes.
+1. **Emotion detection.** Designed in full below, and ready to implement. Starts with an eval
+   and a go/no-go decision on the emotion model (A). Adds large-file limits (cross-cutting E).
 2. **Topic clusters.** Outline only; see "Later phases".
 3. **LLM explanations and aspects.** Outline only; see "Later phases".
 
@@ -17,6 +18,9 @@ Between Phases 1 and 2, **non-English detection** (cross-cutting F) ships as its
 ---
 
 # Phase 0: themes, adaptive layout, pinned and private
+
+**Start with G (the CLAUDE.md size budget, under "Cross-cutting additions"),** so 0A–0C's doc
+rewrites happen on the smaller file.
 
 ## Phase 0A: complementary light and dark themes (designed 2026-10-12)
 
@@ -159,7 +163,7 @@ Ripples to handle in the same commit:
   `docs/capture_screenshot.py`). CLAUDE.md records that a light shot was deliberately dropped on
   2026-08-15, so this is a choice to revisit, not an omission to fix.
 - **Version:** Phase 0 (themes, the adaptive layout **and** 0C below) ships together as **0.8.0**.
-  Phase 1 then becomes **0.9.0**; the commit-10 wording below is updated to match.
+  Phase 1 then becomes **0.9.0**; the commit-11 wording below is updated to match.
 - **Commits:**
   - T1: `feat(ui): add a light theme that mirrors the dark one`. Covers the config, `POSITIVE_COLOR`
     and the tint literal, `test_theme.py`, and the measured comments.
@@ -328,7 +332,7 @@ across two.
   - `siebert/sentiment-roberta-large-english` → `74cea614e245b0832c770ec9aa51bd58df965b9c`
     (upstream last modified 2024-06-11);
   - `j-hartmann/emotion-english-distilroberta-base` → `0e1cd914e3d46199ed785853e12b57304e04178b`
-    (2023-01-02), pinned in Phase 1 commit 3.
+    (2023-01-02), pinned in Phase 1 commit 2, where the eval first loads it.
 - **Design:**
   - A module-level `SENTIMENT_MODEL = ModelRef(repo, revision)` NamedTuple (Phase 1 adds
     `EMOTION_MODEL`; Phase 1's `_load_classifier` takes a `ModelRef`).
@@ -348,7 +352,7 @@ across two.
     `revision=`. Mutation-test by dropping it from one call.
   - `conftest.py`'s module-level `snapshot_download` mock must accept the new keyword.
 - **CI cache key:** derive it from the pins instead of `-v1`, so a pin bump busts the cache by
-  itself and the manual suffix retires (Phase 1 commit 8 then needs no bump):
+  itself and the manual suffix retires (Phase 1 then needs no bump):
   ```yaml
   key: hf-hub-${{ runner.os }}-${{ steps.pins.outputs.hash }}
   ```
@@ -436,7 +440,7 @@ Results show an emotion distribution, and the download carries all four generate
 |---|---|---|
 | Model | [`j-hartmann/emotion-english-distilroberta-base`](https://huggingface.co/j-hartmann/emotion-english-distilroberta-base) | Same `RobertaForSequenceClassification` class SiEBERT uses, so it reuses the whole MLX load path; 82M params, ~160 MB in fp16 |
 | Score column | **`Emotion score`**, not `Emotion confidence` (2026-10-12) | Phase 0B narrows pinned score columns to ≤ 100 px. `Emotion confidence` (18 characters) needs ~130 px and would truncate, and CLAUDE.md rules out a short `label=` because headers must match the download. `Emotion score` is ~13 characters, estimated at ~100 px from CLAUDE.md's header widths; **measure it in L2/§5**. SiEBERT's `Confidence` keeps its name |
-| Activation | **Always on**, no toggle | No new state to invalidate. A toggle would need result invalidation like a column change, plus its own flow tests |
+| Activation | **Always on**, no toggle, **if the model passes A's go/no-go in commit 2** | No new state to invalidate. A toggle would need result invalidation like a column change, plus its own flow tests |
 | Rejected | LLM stage (`mlx-lm`), embedding clusters, RoBERTa-large emotion model | LLM: new dependency, answers vary run to run, seconds per row. Clusters: needs a choice of cluster count and a new UI. Large model: ~4× the per-row cost, not spiked |
 
 ## Spike evidence (2026-10-12, mlx-transformers as locked)
@@ -459,7 +463,7 @@ Loaded via the app's exact path (`snapshot_download` → `.bin`→safetensors �
 - Extract the body of `load_model` into an **uncached** `_load_classifier(ref: ModelRef)` that returns `(model, tokenizer)` and passes `ref.revision` to all three loading calls. Keep the `mx.eval` and its comment there; it applies to every model.
 - `load_model()` keeps its name, signature and decorator, so conftest, the `real_model` fixture and the CLAUDE.md references still hold. Add a sibling `load_emotion_model()` with `@st.cache_resource(show_spinner="Loading emotion model...", show_time=True)`.
 - Call site: `emotion_model, emotion_tokenizer = load_emotion_model()` directly after `model, tokenizer = load_model()`. Same eager-below-the-chrome placement, for the same reasons (see CLAUDE.md's UI bullet).
-- `_ensure_safetensors` is already generic in the repo. By this point it takes 0C's required `revision` and has been split in two by S1 (commit 2), so Phase 1 adds nothing to it. Reword its "1.4 GB" comment so it doesn't read as SiEBERT-only.
+- `_ensure_safetensors` is already generic in the repo. By this point it takes 0C's required `revision` and has been split in two by S1 (commit 3), so Phase 1 adds nothing to it. Reword its "1.4 GB" comment so it doesn't read as SiEBERT-only.
 - Use a **separate tokenizer** per model, even though the ids are identical today. Tokenizing is negligible next to the encoder, and sharing one would silently break if either model were swapped.
 
 ### 2. Inference
@@ -472,7 +476,7 @@ Keep `process_dataframe`'s 2-tuple contract **unchanged**, so the existing unit 
 - New `add_emotions(result, source_df, text_column, model, tokenizer) -> (DataFrame, EmotionColumns)`:
   - Returns a copy of `result` with the two emotion columns appended.
   - Blanks get `""` / `0.0`, like sentiment.
-  - Shows its own `st.progress(0, text="Detecting emotions...")` and empties it when done. Also give `process_dataframe`'s bar a `text=` so the two bars can be told apart. **Commit 5 (E) replaces the two bars with one run-wide bar** and an overall ETA.
+  - Shows its own `st.progress(0, text="Detecting emotions...")` and empties it when done. Also give `process_dataframe`'s bar a `text=` so the two bars can be told apart. **Commit 6 (E) replaces the two bars with one run-wide bar** and an overall ETA.
 - New `EmotionColumns(emotion, confidence)` NamedTuple. Resolve names with `_unique_column_name` against `taken = set(source_df.columns) | set(generated_cols)`:
   - Constants `EMOTION_COL = "Emotion"` and `EMOTION_SCORE_COL = "Emotion score"`.
   - A source `Emotion` column is preserved and the model's becomes `Emotion (model)`, same rule and direction as sentiment.
@@ -535,7 +539,7 @@ Order matters. Land the refactor **first, with the existing suite unchanged and 
 
 ## CI / release
 
-- **No manual cache-key bump.** Since 0C (P1), the `integration` job's hub cache key is derived from the pinned revisions, so adding `EMOTION_MODEL` in commit 3 changes the key by itself. Before 0C, the exact static key would have hit, never saved, and re-downloaded and re-converted the emotion checkpoint on every run. Confirm on the first green run that the new key saves a cache containing both models.
+- **No manual cache-key bump.** Since 0C (P1), the `integration` job's hub cache key is derived from the pinned revisions, so adding `EMOTION_MODEL` in commit 2 changes the key by itself. Before 0C, the exact static key would have hit, never saved, and re-downloaded and re-converted the emotion checkpoint on every run. Confirm on the first green run that the new key saves a cache containing both models.
 - Bump `[project].version` to `0.9.0` (Phase 0 ships as 0.8.0) **only in the final commit, once everything is green**. The `release` job publishes a GitHub Release as soon as a bumped version lands green on `main`.
 
 ## Docs
@@ -550,15 +554,16 @@ Order matters. Land the refactor **first, with the existing suite unchanged and 
 
 0. `chore: add scripts/benchmark.py` (C) and record the SiEBERT-only baseline **before anything else changes**.
 1. `refactor: extract _load_classifier, _valid_sorted, _classify_texts`: no behaviour change; the existing suite passes unmodified.
-2. `perf: fetch pytorch_model.bin only when no converted safetensors exists` (S1) + tests. Before the emotion model, so both checkpoints benefit. Record the disk saved.
-3. `feat: load the emotion model and add add_emotions` + unit tests. Adds `EMOTION_MODEL` with its pinned SHA (0C, P1).
-4. `feat(ui): render emotion columns and distribution` + state, guard, flow tests.
-5. `feat: large-file limits` (E): the live ETA, the row ceiling, the character pre-slice, + tests. After commit 4, so the limits are set against the two-model cost.
-6. `feat(ui): sidebar filters for sentiment and emotion` (B) + flow tests.
-7. `feat(ui): summary export` (D) + the shared counts helper.
-8. `test: add the labeled eval set and pin emotion inference against the real checkpoint` (A). Lands in three steps the user gates: the labeling guide is agreed, then the user reviews every drafted label, then the κ re-label. The gate's counts are pinned only after that.
-9. `docs: emotion detection; large-file limits; disk usage (S2, S5); re-measure grid geometry; recapture screenshot; record eval, benchmark and per-tab memory numbers (S3)`.
-10. `chore: bump version to 0.9.0` + the repo description and topics below, **in the same commit**, so no copy advertises emotion detection before it's on `main`.
+2. `feat: add the labeled eval set and scripts/eval_quality.py` (A) + `EMOTION_MODEL` with its pinned SHA (0C, P1), **then the go/no-go decision**. Lands in three steps the user gates: the labeling guide is agreed, then the user reviews every drafted label, then the κ re-label. Then run the eval and apply A's go/no-go rule. **On a no-go, stop here and bring the numbers to the user;** commits 3–11 assume a go.
+3. `perf: fetch pytorch_model.bin only when no converted safetensors exists` (S1) + tests. Before the emotion model is loaded by the app, so both checkpoints benefit. Record the disk saved.
+4. `feat: load the emotion model and add add_emotions` + unit tests.
+5. `feat(ui): render emotion columns and distribution` + state, guard, flow tests.
+6. `feat: large-file limits` (E): the live ETA, the row ceiling, the character pre-slice, + tests. After commit 5, so the limits are set against the two-model cost.
+7. `feat(ui): sidebar filters for sentiment and emotion` (B) + flow tests.
+8. `feat(ui): summary export` (D) + the shared counts helper.
+9. `test: pin the eval counts against the real checkpoints` (A's gate), from CI as well as locally.
+10. `docs: emotion detection; large-file limits; disk usage (S2, S5); re-measure grid geometry; recapture screenshot; record eval, benchmark and per-tab memory numbers (S3)`, within G's budget.
+11. `chore: bump version to 0.9.0` + the repo description and topics below, **in the same commit**, so no copy advertises emotion detection before it's on `main`.
 
 ### Repo description and topics (at release)
 
@@ -571,11 +576,11 @@ README line 8 (the sentence under the badges), and GitHub's About.
     columns to your data." The README's copy links SiEBERT to its model card.
   - GitHub topics: added `nlp`, `huggingface`, `csv`, `macos`, `on-device-ai`, `python`, for 14 in
     total.
-- **In commit 10, set all three to:**
+- **In commit 11, set all three to:**
   > Classify the sentiment and emotion of English text in CSV files, locally on Apple Silicon. A
   > Streamlit app running SiEBERT and an emotion model with MLX that adds labels and confidence
   > scores to your data.
-- **Update GitHub** only *after* commit 10 is merged and green, since it's outward-facing:
+- **Update GitHub** only *after* commit 11 is merged and green, since it's outward-facing:
   ```bash
   gh repo edit darylalim/siebert-mlx --description "<text above>" \
     --add-topic emotion-detection,emotion-recognition
@@ -700,8 +705,10 @@ Each lands in phase 1 for sentiment + emotion and is extended by phase 2 for top
     annotator that's the only ceiling on how much the scores can mean. If κ is low for a class,
     tighten its rule rather than trusting its F1.
 - **Tool:** `scripts/eval_quality.py`, run by hand like `docs/capture_screenshot.py`. It runs the
-  real models over the file through `process_dataframe` / `add_emotions` (the app's own path,
-  including the sort and batching) and prints, per model:
+  real models over the file through `_load_classifier`, `_valid_sorted` and `_classify_texts`: the
+  core that `process_dataframe` and `add_emotions` both call (the commit-1 refactor), including the
+  sort and batching. That's what lets it run in commit 2, before any emotion UI exists. It prints,
+  per model:
   - accuracy and macro-F1 over the scored (non-`ambiguous`) rows;
   - **95% bootstrap confidence intervals** for both (1,000 resamples, fixed seed, stdlib
     `random`; no new dependency). With a few hundred rows the interval is the honest headline, and
@@ -714,6 +721,31 @@ Each lands in phase 1 for sentiment + emotion and is extended by phase 2 for top
   - for sentiment, the same metrics **per domain**, since the card's 93% hides domain spread.
 - **Record the numbers** in CLAUDE.md, with the date and the versions used: the point estimate
   *and* the interval, per-class support, and κ.
+- **Go/no-go for emotion (agreed 2026-10-12, before any row was labeled).** Phase 1 runs the eval
+  in commit 2, **before** building anything on the emotion model, because its 66% was measured out
+  of domain and "always on" was decided before any measurement. Emotion ships only if **both**
+  hold:
+  1. **Macro-F1 over the well-supported classes (≥ 10 scored rows) is ≥ 0.50**, as a point
+     estimate.
+  2. **It's clearly above the always-`neutral` baseline:** the lower bound of the model's 95%
+     bootstrap interval for that macro-F1 is above the baseline's macro-F1 on the same rows.
+     Always-`neutral` scores zero F1 on every other class, so this baseline is low, and condition 1
+     does most of the work. Report the majority-class accuracy too (always predicting the most
+     common gold label), for context; it isn't part of the rule.
+  - **Fixed before the results, on purpose.** Once the numbers exist, it's too tempting to choose
+    a bar the model passes. Changing the rule after seeing results needs the user's explicit
+    sign-off, and the plan records both the old and the new rule.
+  - **On a no-go, stop and bring the numbers to the user.** Options to put to them, none chosen in
+    advance:
+    - `j-hartmann/emotion-english-roberta-large` (same labels, same class, ~4× the per-row cost,
+      not spiked; re-run the eval on it before building anything);
+    - a smaller label set, if the confusion matrix shows the errors concentrated in one or two
+      boundaries (e.g. `anger`/`disgust`);
+    - dropping emotion, and moving to the non-English check (F) or Phase 2.
+  - **Sentiment has no go/no-go:** it already ships. Its numbers are recorded, and a weak domain
+    goes in the README.
+  - If fewer than two classes are well supported, the rule can't be applied. Treat that as a
+    no-go on the data, not the model, and bring it to the user.
 - **Gate:** the models are deterministic, so an integration test can pin the **exact** number of
   correct rows, **one count per model**. That catches a changed checkpoint, tokenizer or label
   mapping without thresholds that can't decide whether a 1-point move is noise. The intervals are
@@ -791,7 +823,7 @@ Each lands in phase 1 for sentiment + emotion and is extended by phase 2 for top
   - Use the resolved column names as `dimension`.
 - **Mechanics:** an `st.download_button` inside the Results header's `Exports` popover (Phase 0B,
   rule 3), with the same lazy `data=` callable and `on_click="ignore"`, and its own key (e.g.
-  `download_summary`). Name the file `<source>_summary.csv`. This commit (7) is where the popover
+  `download_summary`). Name the file `<source>_summary.csv`. This commit (8) is where the popover
   first appears; until then the header holds `Download` alone.
 - **Skipped rows, and what `share` divides by:** use the metric cards' rule, so the export can't
   repeat the problem the `Skipped` card fixed (shares falling short of 100% with nothing explaining
@@ -807,7 +839,7 @@ Each lands in phase 1 for sentiment + emotion and is extended by phase 2 for top
   charts, so the export can never disagree with what's on screen. Pin that with a test comparing
   the two.
 
-### E. Large-file limits (Phase 1, commit 5)
+### E. Large-file limits (Phase 1, commit 6)
 
 - **Why:** nothing caps a file today. Each phase multiplies the per-row cost (SiEBERT is 24 layers,
   emotion adds 6, Phase 2 adds embeddings), and the only feedback during a long run is a progress
@@ -927,6 +959,41 @@ Each lands in phase 1 for sentiment + emotion and is extended by phase 2 for top
 - **Release:** its own minor version after Phase 1's 0.9.0 (0.10.0), with the README feature list
   and the description left unchanged (it's a guard, not a headline feature).
 
+### G. A size budget for CLAUDE.md (first step of Phase 0)
+
+- **Why:** CLAUDE.md is **112 KB** (measured 2026-10-12), and it's loaded into every session,
+  including the fresh sessions this plan expects for each phase. Every phase's Docs step adds to
+  it. Most of its length is measurement history and rejected alternatives, which matter when
+  someone proposes undoing a decision, not in every session.
+- **The split:**
+  - **CLAUDE.md keeps the working rules:** what each piece does, what must not be undone, and the
+    test that pins each rule (by name). Commands, the architecture list, the hooks and CI.
+  - **`docs/decisions/<topic>.md` takes the history:** measurements, mutation-test records,
+    rejected alternatives, version-specific findings. One file per topic (e.g. `layout.md`,
+    `theme.md`, `collisions.md`, `results-table.md`, `ci.md`). Each CLAUDE.md bullet that loses
+    history ends with a link to where it went.
+- **When:** the **first** step of Phase 0, before 0A and 0B rewrite large parts of CLAUDE.md, so
+  those rewrites happen on the smaller file. Commit as `docs: move decision history out of
+  CLAUDE.md`.
+- **Nothing may be lost in the move.** Check mechanically, not by reading:
+  - every `test_*` name in the old CLAUDE.md appears in the new CLAUDE.md or a decisions file;
+  - so does every number with a unit (`px`, `GB`, `MB`, `ms`, `%`) and every version string;
+  - the old file's word count is roughly matched by the new files' combined count.
+  Write the check as a throwaway script in the scratchpad, run it, and report the result in the
+  commit message.
+- **Budget:**
+  - **Target ≤ 50 KB after the move.** Measure what the rules alone come to before agreeing the
+    number, and adjust it once, then.
+  - **Each later Docs commit is net ≤ +5 KB to CLAUDE.md.** A phase that needs more moves older
+    history out first.
+  - **Pin it:** `tests/test_docs.py` asserts `CLAUDE.md`'s byte size is under `CLAUDE_MD_BUDGET`.
+    Raising the constant is allowed, but it's then a visible edit in a diff rather than unnoticed
+    growth.
+- **Gates:** `docs/decisions/*.md` are `*.md`, so the Stop hook's fingerprint already covers them,
+  and `ruff format --check` formats any Python fences in them.
+- **This plan's own Docs sections** ("CLAUDE.md: …" in 0A, 0B, 0C and Phase 1) follow the split:
+  rules into CLAUDE.md, measurements into the matching decisions file.
+
 ## Storage (agreed 2026-10-12)
 
 Measured on the dev machine on 2026-10-12, with `huggingface_hub` 1.32.0.
@@ -964,7 +1031,7 @@ Measured on the dev machine on 2026-10-12, with `huggingface_hub` 1.32.0.
 
 ### Work items
 
-- **S1. Don't keep the `.bin` once a converted copy exists (Phase 1, commit 2 below).**
+- **S1. Don't keep the `.bin` once a converted copy exists (Phase 1, commit 3 below).**
   - **Today:** `snapshot_download` asks for `model.safetensors`, `pytorch_model.bin` *and*
     `config.json` in one call, so the 1.4 GB `.bin` must stay in the cache or it is re-downloaded
     on every launch.
